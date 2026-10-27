@@ -38,3 +38,13 @@ The checked Kalshi OpenAPI document reports version **3.35.0**. A source fingerp
 ## Remaining deployment verification
 
 Automated checks mock Kalshi; they do not prove that a real key has current permissions, that hosting egress is permitted by your Kalshi account, or that a particular Grok account exposes identical connector UI controls. Real authenticated dry-run checks and an actual Grok connection require the owner's credentials and hosted service. No live trade was placed during development.
+
+## Grok Bot callback compatibility
+
+Cursor documents its fixed MCP callbacks at https://prod.cursor.com/docs/mcp#static-redirect-url. Grok Bot uses Cursor connector infrastructure (https://docs.x.ai/grok-bot/computer-and-apps). The server accepts exactly `https://www.cursor.com/agents/mcp/oauth/callback` and `http://localhost:8787/callback` in addition to its configured HTTPS hosts. Other Cursor paths, HTTP ports, loopback hosts and query variants remain rejected. The actual callback used by this account has not yet been observed; validate with a fresh Bot sign-in after deployment.
+
+Consent completion now returns an HTML document with an escaped, previously validated callback in a meta-refresh and fallback link. This ends the form POST before cross-origin callback navigation. A localhost browser reproduction demonstrated that a 303 callback chain stalls under form-action CSP while document navigation reaches the final origin. The one-time consent cookie is deleted and consumed requests still cannot be replayed. Real Sports Director completion remains to be verified after deployment.
+
+## Price-based fee reserves
+
+Verified official Get Series, Get Event and openapi.yaml fee_type/fee_multiplier/event overrides; https://docs.kalshi.com/getting_started/fee_rounding explains six-decimal trade fees, cent precision and accumulated rebates. Maker coefficients: 0 for quadratic, 0.0175 for quadratic_with_maker_fees, 0.035 for quadratic_with_combo_maker_fees; taker 0.07, all scaled by current multiplier. Taking reserves the quadratic maximum over prices permitted by the buy/sell limit. Estimates round up to cents and add a one-cent per-order rounding cushion plus any explicit owner buffer. Unknown/flat models reject before submission. Metadata is fetched anew for each new request, never for replay. These reserves are estimates; future fee changes and exchange accounting remain authoritative. No live order was submitted during verification.

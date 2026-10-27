@@ -4,7 +4,7 @@ Checked on 2026-10-26 using Python 3.12.14.
 
 | Check | Result |
 |---|---|
-| `pytest -q` | **126 passed** |
+| `pytest -q` | **171 passed** |
 | `ruff check src tests scripts` | Passed |
 | `python -m pip --no-cache-dir check` | No broken requirements |
 | `sh -n start.sh` | Passed |
@@ -46,3 +46,11 @@ All Kalshi calls in tests were mocked. No production credentials were used and n
 ## Optional per-order approval update
 
 The deployment now sets `REQUIRE_TRADE_APPROVAL=false` at the owner's request. Thirteen additional tests cover no-approval dry run, live-disable enforcement, restart deduplication, optional approval validation, reader isolation, policy-override rejection, daily budget persistence/reset, unknown commitments and cancellation/refund behavior. Live trading remains disabled. The daily limit is a submission commitment ceiling including conservative fee reserves, not a loss guarantee.
+
+## OAuth browser-origin regression
+
+Six added cases exercise consent with an explicit same-origin or opaque Origin header, rejection of explicit foreign origins, the required cookie-bound nonce, and unchanged owner-route origin restrictions. The hosted error was reported as invalid_origin; the actual failing browser header was not captured. This change covers the opaque-origin case and must still be verified through a fresh Grok connection after deployment.
+
+## OAuth cookie compatibility
+
+Nine added HTTPS consent cases verify Secure/HttpOnly/host-only SameSite=None cookies, per-attempt cookie isolation, expiry, replay rejection, bad secrets, and missing/mismatched cookie diagnostics. Normal owner-route restrictions are unchanged. The real Grok browser flow still requires verification after the new fix is committed and deployed.
