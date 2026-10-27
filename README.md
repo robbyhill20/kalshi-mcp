@@ -4,7 +4,7 @@ A private execution connector between Grok and the official Kalshi API. It expos
 
 **Initial settings: `DRY_RUN=true` and `TRADING_ENABLED=false`. No live trading is enabled by this repository.**
 
-The included Render deployment and `.env.example` set `REQUIRE_TRADE_APPROVAL=false`, following your preference for Grok to operate without asking you about each bet. The director connection can then execute explicit instructions within the server limits once you deliberately enable live trading. The server itself still contains no betting strategy. A daily submission ceiling of $100 including conservative fee reserves is configured initially; review that amount before any live use. You retain the emergency stop and can inspect every result. The Python fallback requires approval if the setting is omitted.
+The included Render deployment and `.env.example` set `REQUIRE_TRADE_APPROVAL=false`, following your preference for Grok to operate without asking you about each bet. The director connection can then execute explicit instructions within the server limits once you deliberately enable live trading. The server itself still contains no betting strategy. A daily submission ceiling of $200 including conservative fee reserves is configured initially; review that amount before any live use. You retain the emergency stop and can inspect every result. The Python fallback requires approval if the setting is omitted.
 
 The code and mocked integration tests are complete. A public deployment, authentication with your real Kalshi key, and your Grok account connection still need your account setup. Development did not place a real order.
 
@@ -158,7 +158,7 @@ For a **buy**, the supplied price is the maximum per-contract cost. For a **sell
 
 `allow_taker=false` sends a post-only good-till-canceled limit order: if it would cross the spread, the exchange can reject it. `allow_taker=true` explicitly permits execution at the caller's exact limit or better and uses immediate-or-cancel, so any unfilled remainder is canceled instead of resting on the book. Buy limits remain maximum prices; the server never raises them. The order uses the same exchange index as the validated market and balance preflight. There are no market orders, price increases, side changes, quantity increases, replacements or chasing.
 
-The default owner limits are 100 contracts and $100 gross order collateral. Before every new order, the server retrieves event and series fee metadata, applies event overrides, calculates maker fees for maker-only orders or a taker upper bound when taking is allowed, rounds up to cents, and adds a one-cent order rounding cushion. For 10 maker-only YES buys at 47 cents with quadratic maker fees and multiplier 1, the precheck requires $4.76 ($4.70 collateral + $0.05 estimated fee + $0.01 cushion). One contract at 1 cent requires $0.03 under that schedule. These are reserves, not fee quotes or actual charges. Missing metadata, unknown models and flat fee schedules block placement. The exchange determines actual fees and acceptance. An optional owner buffer can add more; callers cannot override it.
+The default owner limit is $100 gross order collateral; there is no separate contract-count limit. The strict tool schema requires a positive whole number of contracts, and the per-order and daily dollar limits apply regardless of quantity. Before every new order, the server retrieves event and series fee metadata, applies event overrides, calculates maker fees for maker-only orders or a taker upper bound when taking is allowed, rounds up to cents, and adds a one-cent order rounding cushion. For 10 maker-only YES buys at 47 cents with quadratic maker fees and multiplier 1, the precheck requires $4.76 ($4.70 collateral + $0.05 estimated fee + $0.01 cushion). One contract at 1 cent requires $0.03 under that schedule. These are reserves, not fee quotes or actual charges. Missing metadata, unknown models and flat fee schedules block placement. The exchange determines actual fees and acceptance. An optional owner buffer can add more; callers cannot override it.
 
 Resting and recently completed local orders retain additional reservations even though Kalshi's available balance already includes holds. This can reject an otherwise affordable order. Completed reservations clear only after a subsequent balance timestamp is at least two seconds after terminal status was observed. If Kalshi does not advance that timestamp, the reserve stays. Reconcile orders before new execution; do not delete state to bypass a rejection. These safeguards prioritize avoiding overspend over maximizing capacity.
 
@@ -168,7 +168,7 @@ A new sell is also blocked while any local order in that ticker retains a reserv
 
 ### Daily submission ceiling
 
-`MAX_DAILY_ORDER_COST_CENTS=10000` initially limits new submissions to $100 per UTC day,
+`MAX_DAILY_ORDER_COST_CENTS=20000` initially limits new submissions to $200 per UTC day,
 counting gross collateral plus the conservative fee reserve. This is a ceiling on submitted
 commitments, not an actual-loss guarantee. It is enforced transactionally in SQLite and
 survives restarts. Unknown submissions continue to count. Cancellation and later release
@@ -254,13 +254,12 @@ Do not restore an old disk snapshot or delete/reset SQLite to fix a duplicate er
 | `DRY_RUN` | `true` |
 | `TRADING_ENABLED` | `false` |
 | `REQUIRE_TRADE_APPROVAL` | Included deployment: `false`; Python fallback: `true`. Only owner configuration can change it |
-| `MAX_DAILY_ORDER_COST_CENTS` | `10000`; daily submission ceiling including conservative fee reserves, resets at midnight UTC |
+| `MAX_DAILY_ORDER_COST_CENTS` | `20000`; daily submission ceiling including conservative fee reserves, resets at midnight UTC |
 | `ADMIN_TOKEN` | Required different random secret, at least 32 characters; owner only |
 | `MCP_READ_TOKEN` | Required different random secret, at least 32 characters |
 | `MCP_DIRECTOR_TOKEN` | Required different random secret, at least 32 characters; Sports Director only |
 | `DATABASE_PATH` | Local `data/kalshi.sqlite3`; Render must use `/var/data/kalshi.sqlite3` |
 | `PUBLIC_BASE_URL` | Optional HTTPS origin; on Render omit to use `RENDER_EXTERNAL_URL` |
-| `MAX_CONTRACTS` | `100`; owner order quantity ceiling |
 | `MAX_ORDER_COST_CENTS` | `10000`; gross collateral ceiling, excluding extra fee reserve |
 | `FEE_BUFFER_CENTS_PER_CONTRACT` | `0`; optional extra owner buffer on top of calculated fees and the one-cent rounding cushion |
 | `SNAPSHOT_MAX_AGE_SECONDS` | `5`; entire placement preflight must finish within this window |

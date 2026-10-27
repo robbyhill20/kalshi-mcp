@@ -26,7 +26,7 @@ services:
       - key: REQUIRE_TRADE_APPROVAL
         value: "false"
       - key: MAX_DAILY_ORDER_COST_CENTS
-        value: "10000"
+        value: "20000"
       - key: KALSHI_API_KEY_ID
         sync: false
       - key: KALSHI_PRIVATE_KEY
