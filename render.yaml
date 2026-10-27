@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: kalshi-grok-mcp
+    runtime: python
+    plan: starter
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: sh start.sh
+    healthCheckPath: /health
+    autoDeployTrigger: "off"
+    disk:
+      name: kalshi-state
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.14
+      - key: DATABASE_PATH
+        value: /var/data/kalshi.sqlite3
+      - key: KALSHI_ENV
+        value: production
+      - key: DRY_RUN
+        value: "true"
+      - key: TRADING_ENABLED
+        value: "false"
+      - key: REQUIRE_TRADE_APPROVAL
+        value: "false"
+      - key: MAX_DAILY_ORDER_COST_CENTS
+        value: "10000"
+      - key: KALSHI_API_KEY_ID
+        sync: false
+      - key: KALSHI_PRIVATE_KEY
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: MCP_READ_TOKEN
+        generateValue: true
+      - key: MCP_DIRECTOR_TOKEN
+        generateValue: true

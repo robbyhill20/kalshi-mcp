@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Kalshi owner controls</title><link rel="stylesheet" href="/assets/owner.css"></head>
+<body><main><h1>Kalshi owner controls</h1>
+<p>Use this page to check your server and stop trading. Per-order approvals are optional.
+Keep the owner token out of Grok. Open the hosted /owner URL after deployment; a local HTML file cannot connect.</p>
+<label>ADMIN_TOKEN <input id="token" type="password" autocomplete="off"></label>
+<div class="buttons"><button id="status">Check connection</button><button id="halt" class="danger">STOP new placements</button>
+<button id="resume">Clear emergency stop</button><button id="revoke">Revoke Grok sessions</button></div>
+<p>The emergency stop takes effect before the next submission check. An order already sent may still execute.
+Clearing it does not enable live trading. Cancel existing orders separately in Kalshi or through Sports Director.</p>
+<section id="approval-controls"><h2>Optional: approve one exact order</h2><p>This section is only needed when REQUIRE_TRADE_APPROVAL=true.
+Each approval expires after 15 minutes and is usable once.
+Buy price is your maximum cost per contract; sell price is your minimum proceeds per contract.</p>
+<form id="approval">
+<label>Request ID (UUID from the proposed trade) <input id="request_id" required></label>
+<label>Exact market ticker <input id="ticker" required pattern="[A-Z0-9][A-Z0-9_.-]*"></label>
+<label>Side <select id="side"><option>yes</option><option>no</option></select></label>
+<label>Action <select id="action"><option>buy</option><option>sell</option></select></label>
+<label>Contracts <input id="contracts" type="number" min="1" max="10000" step="1" required></label>
+<label>Limit price, cents <input id="price" type="number" min="1" max="99" step="1" required></label>
+<label class="check"><input id="taker" type="checkbox"> Explicitly allow immediate execution at this limit or better</label>
+<p>The unchecked default requires a maker-only order. No price, side or quantity is changed automatically.</p>
+<button>I approve these exact terms</button></form></section>
+<h2>Result</h2><pre id="result" role="status">Check the connection to see the current environment and dry-run settings.</pre>
+<p>When per-order approval is disabled, configure Sports Director with your allowed trading policy and spending limits.
+The connector still needs a unique request ID for every new order.</p>
+</main><script src="/assets/owner.js"></script></body></html>

@@ -1,0 +1,11 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
+body { margin: 0; background: light-dark(#f3f5f7, #13171b); }
+main { max-width: 760px; margin: 2rem auto; padding: 2rem; background: light-dark(white, #20262b); border-radius: 14px; }
+label { display: block; margin: 1rem 0; }
+input, select, button { font: inherit; padding: .6rem; border-radius: 5px; border: 1px solid #888; }
+input:not([type=checkbox]) { display: block; width: 95%; }
+button { cursor: pointer; margin: .3rem 0; }
+.buttons { display: flex; flex-wrap: wrap; gap: .5rem; }
+.danger { color: white; background: #a41422; }
+pre { overflow-wrap: anywhere; white-space: pre-wrap; background: light-dark(#eef2f5, #13171b); padding: 1rem; }
+@media (max-width: 600px) { main { margin: 0; padding: 1rem; } }

@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.sqlite*
+*.lock
+data/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+htmlcov/
+.coverage
+.DS_Store
+*.zip

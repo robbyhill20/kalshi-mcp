@@ -1,0 +1,1 @@
+"""Narrow Kalshi execution connector."""

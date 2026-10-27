@@ -1,0 +1,79 @@
+{
+  "type": "object",
+  "required": [
+    "ticker",
+    "side",
+    "count",
+    "price",
+    "time_in_force",
+    "self_trade_prevention_type"
+  ],
+  "properties": {
+    "ticker": {
+      "type": "string"
+    },
+    "client_order_id": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "bid",
+        "ask"
+      ]
+    },
+    "count": {
+      "type": "string"
+    },
+    "price": {
+      "type": "string"
+    },
+    "expiration_time": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "time_in_force": {
+      "type": "string",
+      "enum": [
+        "fill_or_kill",
+        "good_till_canceled",
+        "immediate_or_cancel"
+      ]
+    },
+    "post_only": {
+      "type": "boolean"
+    },
+    "self_trade_prevention_type": {
+      "allOf": [
+        {
+          "type": "string",
+          "enum": [
+            "taker_at_cross",
+            "maker"
+          ]
+        }
+      ]
+    },
+    "cancel_order_on_pause": {
+      "type": "boolean"
+    },
+    "reduce_only": {
+      "type": "boolean"
+    },
+    "subaccount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "order_group_id": {
+      "type": "string"
+    },
+    "exchange_index": {
+      "allOf": [
+        {
+          "type": "integer"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}
