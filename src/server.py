@@ -6,6 +6,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from mcp import types
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
@@ -50,6 +51,10 @@ DESCRIPTIONS = {
 }
 
 
+SECURITY_POLICY = ("default-src 'self'; script-src 'self'; style-src 'self'; "
+                   "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+
+
 class IngressGuard:
     def __init__(self, app):
         self.app = app
@@ -76,9 +81,11 @@ class IngressGuard:
                 message.setdefault("headers", []).extend([
                     (b"cache-control", b"no-store"), (b"referrer-policy", b"no-referrer"),
                     (b"x-content-type-options", b"nosniff"),
-                    (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self'; "
-                     b"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"),
                 ])
+                # A second CSP intersects with the first; do not accidentally
+                # override the consent page's exact, validated OAuth callback.
+                if not any(key.lower() == b"content-security-policy" for key, _ in message["headers"]):
+                    message["headers"].append((b"content-security-policy", SECURITY_POLICY.encode("ascii")))
             await send(message)
 
         await self.app(scope, receive, secure_send)
@@ -206,6 +213,9 @@ def create_app(settings=None, client=None):
             if not redirect:
                 return HTMLResponse("Invalid connector secret or expired request. Reconnect from Grok.", 403)
             response = RedirectResponse(redirect, status_code=303)
+            destination = urlsplit(redirect)
+            response.headers["Content-Security-Policy"] = (
+                SECURITY_POLICY + f" {destination.scheme}://{destination.netloc}")
             response.delete_cookie(consent_cookie_name(nonce), secure=secure_cookie,
                                    httponly=True, samesite=same_site)
             return response
@@ -225,7 +235,11 @@ def create_app(settings=None, client=None):
                 "<form method='post'><input type='hidden' name='nonce' value='" + html.escape(nonce, quote=True) + "'>"
                 "<label>Connector secret <input name='login_token' type='password' required autocomplete='off'></label>"
                 "<button>Authorize this connection</button></form></main></body></html>")
-        response = HTMLResponse(page)
+        # Browsers enforce form-action on the POST's redirect chain as well.
+        # Allow only this registered callback origin, never arbitrary destinations.
+        callback_url = urlsplit(pending["params"]["redirect_uri"])
+        callback_origin = f"{callback_url.scheme}://{callback_url.netloc}"
+        response = HTMLResponse(page, headers={"Content-Security-Policy": SECURITY_POLICY + " " + callback_origin})
         # OAuth arrives from another site; Lax withholds the cookie on some
         # redirected/opaque-origin form POSTs. Only this short-lived nonce cookie
         # uses SameSite=None, always with Secure, HttpOnly and a host-only path.
