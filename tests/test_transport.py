@@ -97,6 +97,49 @@ def test_owner_controls_require_owner_secret(web):
     assert client.get("/health").json()["halted"] is True
 
 
+def test_owner_only_equal_shard_allocation(web):
+    client, _, remote = web
+    endpoint = "/owner/allocation"
+    owner = {"Authorization": "Bearer " + "a" * 48}
+    director = {"Authorization": "Bearer " + "d" * 48}
+    assert client.get(endpoint).status_code == 401
+    assert client.post(endpoint, json={"target": "equal_default_sports"}, headers=director).status_code == 401
+    assert client.post(endpoint, json={"target": "equal_default_sports", "exchange_index": 1},
+                       headers=owner).status_code == 400
+    assert remote.allocation_posts == []
+    assert client.get(endpoint, headers=owner).json()["equal_default_sports_active"] is False
+    response = client.post(endpoint, json={"target": "equal_default_sports"}, headers=owner)
+    assert response.status_code == 200, response.text
+    assert response.json()["equal_default_sports_active"] is True
+    assert remote.allocation_posts == [{"allocations": [{"exchange_index": 0, "percent": 50},
+                                                      {"exchange_index": 3, "percent": 50}],
+                                        "resting_margin_reservation": "sum"}]
+    assert client.get(endpoint, headers=owner).json()["equal_default_sports_active"] is True
+
+
+def test_ambiguous_allocation_write_is_read_back_without_retry(web):
+    client, _, remote = web
+    remote.fail[("POST", "/portfolio/target_balance_allocation")] = httpx.ReadTimeout("ambiguous")
+    response = client.post("/owner/allocation", json={"target": "equal_default_sports"},
+                           headers={"Authorization": "Bearer " + "a" * 48})
+    assert response.status_code == 502
+    assert response.json()["error"] == "allocation_update_unconfirmed"
+    assert len([key for key, _ in remote.calls if key ==
+                ("POST", "/portfolio/target_balance_allocation")]) == 1
+
+
+def test_allocation_scope_failure_is_reported_without_retry(web):
+    client, _, remote = web
+    remote.fail[("POST", "/portfolio/target_balance_allocation")] = 403
+    response = client.post("/owner/allocation", json={"target": "equal_default_sports"},
+                           headers={"Authorization": "Bearer " + "a" * 48})
+    assert response.status_code == 502
+    assert response.json()["error"] == "allocation_update_rejected"
+    assert response.json()["reason"] == "permission_denied"
+    assert len([key for key, _ in remote.calls if key ==
+                ("POST", "/portfolio/target_balance_allocation")]) == 1
+
+
 def test_owner_approves_exact_dry_run_over_http(web):
     client = web[0]
     terms = {"request_id": str(uuid4()), "ticker": "TEST-MARKET", "side": "yes", "action": "buy",

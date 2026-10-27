@@ -22,6 +22,8 @@ class Exchange:
         self.posts = []
         self.deletes = []
         self.orders = {}
+        self.target_allocation = {"allocations": [], "resting_margin_reservation": "sum"}
+        self.allocation_posts = []
         self.balance = 100000
         self.event = {"event_ticker": "TEST-EVENT", "series_ticker": "TEST"}
         self.series = {"ticker": "TEST", "fee_type": "quadratic_with_maker_fees", "fee_multiplier": 1}
@@ -60,6 +62,14 @@ class Exchange:
         if path == "/portfolio/balance":
             return httpx.Response(200, json={"balance": self.balance, "balance_dollars": f"{self.balance / 100:.4f}",
                                             "portfolio_value": 0, "updated_ts": 0})
+        if path == "/portfolio/target_balance_allocation":
+            if request.method == "GET":
+                return httpx.Response(200, json=self.target_allocation)
+            if request.method == "POST":
+                body = json.loads(request.content)
+                self.allocation_posts.append(body)
+                self.target_allocation = body
+                return httpx.Response(200, content=b"")
         if path == "/portfolio/positions":
             return httpx.Response(200, json={"market_positions": self.positions, "event_positions": [], "cursor": ""})
         if path == "/markets/TEST-MARKET":
