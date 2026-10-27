@@ -79,11 +79,12 @@ class KalshiClient:
     async def target_balance_allocation(self):
         return await self._request("GET", "/portfolio/target_balance_allocation")
 
-    async def set_equal_default_sports_allocation(self):
+    async def set_default_combos_sports_allocation(self):
         # Owner-only operation. Never expose arbitrary allocations to MCP callers.
         return await self._request("POST", "/portfolio/target_balance_allocation",
-                                   body={"allocations": [{"exchange_index": 0, "percent": 50},
-                                                         {"exchange_index": 3, "percent": 50}],
+                                   body={"allocations": [{"exchange_index": 0, "percent": 40},
+                                                         {"exchange_index": 1, "percent": 20},
+                                                         {"exchange_index": 3, "percent": 40}],
                                          "resting_margin_reservation": "sum"}, allow_empty=True)
 
     async def positions(self, **params):

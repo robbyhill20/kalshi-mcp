@@ -150,11 +150,11 @@ def create_app(settings=None, client=None):
     def safe_origin(request):
         return request.headers.get("origin") in {None, settings.public_base_url}
 
-    def equal_default_sports(allocation):
+    def default_combos_sports_target(allocation):
         rows = allocation.get("allocations")
-        return (isinstance(rows, list) and len(rows) == 2
+        return (isinstance(rows, list) and len(rows) == 3
                 and {row.get("exchange_index"): row.get("percent") for row in rows
-                     if isinstance(row, dict)} == {0: 50, 3: 50}
+                     if isinstance(row, dict)} == {0: 40, 1: 20, 3: 40}
                 and allocation.get("resting_margin_reservation") == "sum")
 
     async def owner_api(request: Request):
@@ -173,15 +173,15 @@ def create_app(settings=None, client=None):
             if action == "allocation" and request.method == "GET":
                 current = await client.target_balance_allocation()
                 return JSONResponse({"target_allocation": current,
-                                     "equal_default_sports_active": equal_default_sports(current)})
+                                     "default_combos_sports_target_active": default_combos_sports_target(current)})
             if action == "allocation" and request.method == "POST":
-                if await request.json() != {"target": "equal_default_sports"}:
+                if await request.json() != {"target": "default_40_combos_20_sports_40"}:
                     return JSONResponse({"error": "invalid_arguments"}, 400)
-                db.audit("owner_balance_allocation_requested", target="50_percent_index_0_50_percent_index_3",
+                db.audit("owner_balance_allocation_requested", target="40_percent_index_0_20_percent_index_1_40_percent_index_3",
                          resting_margin_reservation="sum")
                 write_error = None
                 try:
-                    await client.set_equal_default_sports_allocation()
+                    await client.set_default_combos_sports_allocation()
                 except APIError as exc:
                     # A timeout after the POST is ambiguous; read the target, never retry the write.
                     write_error = exc
@@ -193,15 +193,15 @@ def create_app(settings=None, client=None):
                     return JSONResponse({"error": "allocation_update_unconfirmed",
                                          "reason": exc.code,
                                          "next_step": "Check the current allocation before trying again."}, 502)
-                if not equal_default_sports(current):
+                if not default_combos_sports_target(current):
                     return JSONResponse({"error": "allocation_update_unconfirmed" if not write_error
                                          or write_error.ambiguous else "allocation_update_rejected",
                                          "reason": write_error.code if write_error else "target_not_confirmed",
                                          "target_allocation": current,
                                          "next_step": "Check the current allocation before trying again."}, 502)
-                db.audit("owner_balance_allocation_confirmed", target="50_percent_index_0_50_percent_index_3",
+                db.audit("owner_balance_allocation_confirmed", target="40_percent_index_0_20_percent_index_1_40_percent_index_3",
                          resting_margin_reservation="sum")
-                return JSONResponse({"equal_default_sports_active": True,
+                return JSONResponse({"default_combos_sports_target_active": True,
                                      "target_allocation": current})
             if action == "approvals" and request.method == "POST":
                 args = ApprovalInput.model_validate(await request.json())
