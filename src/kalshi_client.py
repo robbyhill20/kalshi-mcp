@@ -42,7 +42,7 @@ class KalshiClient:
                 "KALSHI-ACCESS-TIMESTAMP": timestamp,
                 "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode()}
 
-    async def _request(self, method, endpoint, *, params=None, body=None):
+    async def _request(self, method, endpoint, *, params=None, body=None, allow_empty=False):
         path = API_ROOT + endpoint
         try:
             response = await self.http.request(method, path, params=params, json=body,
@@ -57,6 +57,8 @@ class KalshiClient:
                     409: "exchange_conflict", 429: "rate_limited"}.get(status, "api_error")
             # Even conflict/rate-limit responses are not permission to re-submit.
             raise APIError(code, status, ambiguous=method != "GET" and (status >= 500 or status in {408, 409, 429}))
+        if allow_empty and not response.content:
+            return {}
         try:
             result = response.json()
             if not isinstance(result, dict):
@@ -73,6 +75,16 @@ class KalshiClient:
         if exchange_index is not None:
             params["exchange_index"] = exchange_index
         return await self._request("GET", "/portfolio/balance", params=params)
+
+    async def target_balance_allocation(self):
+        return await self._request("GET", "/portfolio/target_balance_allocation")
+
+    async def set_equal_default_sports_allocation(self):
+        # Owner-only operation. Never expose arbitrary allocations to MCP callers.
+        return await self._request("POST", "/portfolio/target_balance_allocation",
+                                   body={"allocations": [{"exchange_index": 0, "percent": 50},
+                                                         {"exchange_index": 3, "percent": 50}],
+                                         "resting_margin_reservation": "sum"}, allow_empty=True)
 
     async def positions(self, **params):
         return await self._request("GET", "/portfolio/positions", params={"subaccount": 0, **params})

@@ -28,6 +28,7 @@ from starlette.routing import Route
 from .auth import OwnerOAuth
 from .config import load_settings
 from .database import Database
+from .errors import APIError
 from .kalshi_client import KalshiClient
 from .logging_config import configure_logging
 from .models import ApprovalInput, KillInput, TOOL_MODELS, WRITE_TOOLS
@@ -149,6 +150,13 @@ def create_app(settings=None, client=None):
     def safe_origin(request):
         return request.headers.get("origin") in {None, settings.public_base_url}
 
+    def equal_default_sports(allocation):
+        rows = allocation.get("allocations")
+        return (isinstance(rows, list) and len(rows) == 2
+                and {row.get("exchange_index"): row.get("percent") for row in rows
+                     if isinstance(row, dict)} == {0: 50, 3: 50}
+                and allocation.get("resting_margin_reservation") == "sum")
+
     async def owner_api(request: Request):
         if not owner_authorized(request) or not safe_origin(request):
             return JSONResponse({"error": "owner_authentication_required"}, 401)
@@ -162,6 +170,39 @@ def create_app(settings=None, client=None):
                                      "require_trade_approval": settings.require_trade_approval,
                                      "daily_budget": db.daily_budget(settings.max_daily_order_cost_cents),
                                      "balance_cents": balance.get("balance")})
+            if action == "allocation" and request.method == "GET":
+                current = await client.target_balance_allocation()
+                return JSONResponse({"target_allocation": current,
+                                     "equal_default_sports_active": equal_default_sports(current)})
+            if action == "allocation" and request.method == "POST":
+                if await request.json() != {"target": "equal_default_sports"}:
+                    return JSONResponse({"error": "invalid_arguments"}, 400)
+                db.audit("owner_balance_allocation_requested", target="50_percent_index_0_50_percent_index_3",
+                         resting_margin_reservation="sum")
+                write_error = None
+                try:
+                    await client.set_equal_default_sports_allocation()
+                except APIError as exc:
+                    # A timeout after the POST is ambiguous; read the target, never retry the write.
+                    write_error = exc
+                    db.audit("owner_balance_allocation_api_error", reason=exc.code,
+                             ambiguous=exc.ambiguous)
+                try:
+                    current = await client.target_balance_allocation()
+                except APIError as exc:
+                    return JSONResponse({"error": "allocation_update_unconfirmed",
+                                         "reason": exc.code,
+                                         "next_step": "Check the current allocation before trying again."}, 502)
+                if not equal_default_sports(current):
+                    return JSONResponse({"error": "allocation_update_unconfirmed" if not write_error
+                                         or write_error.ambiguous else "allocation_update_rejected",
+                                         "reason": write_error.code if write_error else "target_not_confirmed",
+                                         "target_allocation": current,
+                                         "next_step": "Check the current allocation before trying again."}, 502)
+                db.audit("owner_balance_allocation_confirmed", target="50_percent_index_0_50_percent_index_3",
+                         resting_margin_reservation="sum")
+                return JSONResponse({"equal_default_sports_active": True,
+                                     "target_allocation": current})
             if action == "approvals" and request.method == "POST":
                 args = ApprovalInput.model_validate(await request.json())
                 terms = orders.terms(args)
