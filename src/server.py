@@ -22,7 +22,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from .auth import OwnerOAuth
@@ -212,10 +212,19 @@ def create_app(settings=None, client=None):
             redirect = oauth.consent(nonce, str(form.get("login_token", "")))
             if not redirect:
                 return HTMLResponse("Invalid connector secret or expired request. Reconnect from Grok.", 403)
-            response = RedirectResponse(redirect, status_code=303)
-            destination = urlsplit(redirect)
-            response.headers["Content-Security-Policy"] = (
-                SECURITY_POLICY + f" {destination.scheme}://{destination.netloc}")
+            # End the form submission before navigating to the OAuth callback.
+            # A 303 keeps the whole external redirect chain subject to the form's
+            # CSP; Cursor may redirect through another origin on its way to Grok.
+            # A new document navigation avoids that trap without widening CSP.
+            destination = html.escape(redirect, quote=True)
+            response = HTMLResponse(
+                "<!doctype html><html><head><title>Authorization complete</title>"
+                f'<meta http-equiv="refresh" content="0;url={destination}">'
+                "<meta name='viewport' content='width=device-width'></head><body>"
+                "<h1>Authorization complete</h1><p>Returning to your connector.</p>"
+                f'<p><a href="{destination}" rel="noreferrer">Continue to your connector</a></p>'
+                "<p>If it does not open automatically, use the link above. Do not resubmit the authorization form.</p>"
+                "</body></html>")
             response.delete_cookie(consent_cookie_name(nonce), secure=secure_cookie,
                                    httponly=True, samesite=same_site)
             return response
