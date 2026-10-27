@@ -9,6 +9,13 @@ from mcp.server.auth.provider import (AccessToken, AuthorizationCode, Authorizat
                                       AuthorizeError, RefreshToken, RegistrationError, TokenError)
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
+from .logging_config import audit_event
+
+# Grok Bot uses Cursor's connector backend. These are Cursor's documented
+# fixed MCP callbacks, not a general allowance for HTTP or localhost URLs.
+BOT_CALLBACKS = frozenset({"https://www.cursor.com/agents/mcp/oauth/callback",
+                           "http://localhost:8787/callback"})
+
 
 def token_hash(value):
     return hashlib.sha256(value.encode()).hexdigest()
@@ -35,9 +42,15 @@ class OwnerOAuth:
     async def register_client(self, client_info):
         allowed = self.settings.oauth_redirect_hosts.split(",")
         for uri in client_info.redirect_uris or []:
-            url = urlsplit(str(uri))
+            address = str(uri)
+            if address in BOT_CALLBACKS:
+                continue
+            url = urlsplit(address)
             if (url.scheme != "https" or url.hostname not in allowed or url.port not in {None, 443}
-                    or url.username or url.fragment):
+                    or url.username or url.password or url.fragment):
+                # Log only routing metadata; callback queries can contain secrets.
+                audit_event("oauth_callback_rejected", scheme=url.scheme[:16],
+                            host=(url.hostname or "")[:253])
                 raise RegistrationError("invalid_redirect_uri", "Callback host must be owner-allowlisted HTTPS")
         # No URL fetching or automatic trust in names/software metadata.
         self.db.secret_put("client", client_info.client_id, client_info.model_dump(mode="json"), time.time() + 365 * 86400)
