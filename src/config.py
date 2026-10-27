@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     max_contracts: int = Field(default=100, ge=1, le=10000)
     max_order_cost_cents: int = Field(default=10000, ge=1, le=1000000)
     max_daily_order_cost_cents: int = Field(default=10000, ge=1, le=100000000)
-    fee_buffer_cents_per_contract: int = Field(default=100, ge=1, le=100)
+    fee_buffer_cents_per_contract: int = Field(default=0, ge=0, le=100)
     snapshot_max_age_seconds: int = Field(default=5, ge=1, le=30)
     api_timeout_seconds: int = Field(default=10, ge=1, le=30)
     oauth_redirect_hosts: str = "grok.com,accounts.x.ai,console.x.ai"

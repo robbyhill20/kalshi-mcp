@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 
 from .errors import Rejection
 
@@ -65,7 +65,37 @@ def validate_exchange(exchange, market):
     return index
 
 
-def validate_account(trade, positions, orders, settings):
+def estimate_fee_reserve(trade, event, series):
+    fee_type = event.get("fee_type_override")
+    multiplier = event.get("fee_multiplier_override")
+    if (fee_type is None) != (multiplier is None):
+        raise Rejection("incomplete_event_fee_override")
+    if fee_type is None:
+        fee_type, multiplier = series.get("fee_type"), series.get("fee_multiplier")
+    maker_rates = {"quadratic": Decimal(0), "quadratic_with_maker_fees": Decimal("0.0175"),
+                   "quadratic_with_combo_maker_fees": Decimal("0.035")}
+    if fee_type not in maker_rates:
+        raise Rejection("unsupported_fee_model")
+    multiplier = decimal(multiplier)
+    if not 0 <= multiplier <= 1000 or isinstance(event.get("fee_multiplier_override", series.get("fee_multiplier")), bool):
+        raise Rejection("invalid_fee_multiplier")
+    rate = Decimal("0.07") if trade.allow_taker else maker_rates[fee_type]
+    price = Decimal(trade.limit_price_cents) / 100
+    # Taking can execute at a better price. Reserve the maximum fee over the
+    # permitted execution-price interval, whose quadratic peak is at 50 cents.
+    if trade.allow_taker:
+        price = min(price, Decimal("0.5")) if trade.action == "buy" else max(price, Decimal("0.5"))
+    model = rate * multiplier * trade.contracts * price * (1 - price)
+    model = model.quantize(Decimal("0.000001"), rounding=ROUND_CEILING)
+    fee_cents = int((model * 100).to_integral_value(rounding=ROUND_CEILING))
+    # One extra cent covers temporary rounding before accumulator rebates.
+    return {"fee_type": fee_type, "fee_multiplier": str(multiplier),
+            "liquidity_assumption": "taker_upper_bound" if trade.allow_taker else "maker_only",
+            "estimated_fee_cents": fee_cents, "rounding_cushion_cents": 1,
+            "fee_reserve_cents": fee_cents + 1}
+
+
+def validate_account(trade, positions, orders, settings, fee_reserve_cents):
     if trade.contracts > settings.max_contracts:
         raise Rejection("owner_contract_limit")
     # Reserve gross collateral even when an order might reduce other exposure.
@@ -88,7 +118,7 @@ def validate_account(trade, positions, orders, settings):
                         if o.get("ticker") == trade.ticker and o.get("book_side") == reducing_direction), Decimal(0))
         if trade.contracts > owned - reserved:
             raise Rejection("insufficient_uncommitted_contracts_to_sell")
-    return cost + trade.contracts * settings.fee_buffer_cents_per_contract
+    return cost + fee_reserve_cents + trade.contracts * settings.fee_buffer_cents_per_contract
 
 
 def available_cents(balance):

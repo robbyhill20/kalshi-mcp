@@ -80,6 +80,12 @@ class KalshiClient:
     async def market(self, ticker):
         return await self._request("GET", f"/markets/{ticker}")
 
+    async def event(self, ticker):
+        return await self._request("GET", f"/events/{ticker}")
+
+    async def series(self, ticker):
+        return await self._request("GET", f"/series/{ticker}")
+
     async def markets(self, **params):
         return await self._request("GET", "/markets", params=params)
 

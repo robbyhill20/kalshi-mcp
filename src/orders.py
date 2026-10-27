@@ -5,7 +5,7 @@ from uuid import UUID
 
 from .errors import APIError, Rejection
 from .models import PlaceOrderInput, Ticker
-from .validation import (available_cents, book_direction, normalize_order,
+from .validation import (available_cents, book_direction, estimate_fee_reserve, normalize_order,
                          validate_account, validate_exchange, validate_market, yes_price)
 from pydantic import TypeAdapter
 
@@ -76,11 +76,24 @@ class Orders:
                     if (prior_trade.ticker == trade.ticker and book_direction(prior_trade) == book_direction(trade)
                             and yes_price(prior_trade) == yes_price(trade)):
                         raise Rejection("duplicate_existing_local_order")
-            reserve = validate_account(trade, positions, orders, self.settings)
+            # Identifiers from upstream metadata still pass the strict ticker
+            # schema before entering our fixed internal endpoint methods.
+            event_ticker = TypeAdapter(Ticker).validate_python(market.get("event_ticker"))
+            event = (await self.client.event(event_ticker))["event"]
+            if event.get("event_ticker") != event_ticker:
+                raise Rejection("fee_event_ticker_mismatch")
+            series_ticker = TypeAdapter(Ticker).validate_python(event.get("series_ticker"))
+            series = (await self.client.series(series_ticker))["series"]
+            if series.get("ticker") != series_ticker:
+                raise Rejection("fee_series_ticker_mismatch")
+            fees = estimate_fee_reserve(trade, event, series)
+            fees["extra_owner_buffer_cents"] = trade.contracts * self.settings.fee_buffer_cents_per_contract
+            reserve = validate_account(trade, positions, orders, self.settings, fees["fee_reserve_cents"])
             self.db.audit("preflight_snapshot", request_id=rid, calling_tool="kalshi_place_order",
                           inputs=trade.model_dump(mode="json"), market_snapshot=market,
                           account_snapshot={"balance": balance, "positions": positions, "open_orders": orders},
-                          validation_results={"required_cents": reserve, "local_reservations_cents": other_reserve})
+                          validation_results={"required_cents": reserve, "local_reservations_cents": other_reserve,
+                                              "fee_calculation": fees}, fee_snapshot={"event": event, "series": series})
             if reserve > available_cents(balance) - other_reserve:
                 raise Rejection("insufficient_available_balance")
             if reserve > self.db.daily_budget(self.settings.max_daily_order_cost_cents)["remaining_cents"]:
@@ -91,6 +104,8 @@ class Orders:
             validate_market(market, trade)
             if market.get("exchange_index") != index:
                 raise Rejection("market_exchange_index_changed")
+            if market.get("event_ticker") != event_ticker:
+                raise Rejection("market_fee_event_changed")
             if monotonic() - started > self.settings.snapshot_max_age_seconds:
                 raise Rejection("account_snapshot_stale")
             if trade.approval_id is not None:
@@ -103,6 +118,7 @@ class Orders:
                           "approval_required": self.settings.require_trade_approval,
                           "dry_run": True, "submitted": False, "would_submit": body,
                           "required_balance_cents": reserve, "available_balance_cents": available_cents(balance),
+                          "fee_calculation": fees,
                           "market_snapshot": market, "validation": "passed", "fill_status": "not_simulated"}
                 self.db.finish(rid, result, reserve=0)
                 return result
@@ -117,7 +133,7 @@ class Orders:
             result = {**immediate, "order_id": order_id, "request_id": rid,
                       "approval_id": str(trade.approval_id) if trade.approval_id else None, "submitted": True,
                       "approval_required": self.settings.require_trade_approval,
-                      "dry_run": False, "submission": created}
+                      "dry_run": False, "submission": created, "fee_calculation": fees}
             # Persist the ID before any follow-up HTTP request.
             self.db.finish(rid, result, reserve=reserve, keep_gate=True)
             try:
