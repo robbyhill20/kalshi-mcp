@@ -146,7 +146,17 @@ async def test_readers_cannot_place_or_cancel(rig):
 
 
 async def test_explicit_taker_permission(rig):
-    assert (await rig.place(rig.trade(allow_taker=True)))["would_submit"]["post_only"] is False
+    body = (await rig.place(rig.trade(allow_taker=True)))["would_submit"]
+    assert body["post_only"] is False
+    assert body["time_in_force"] == "immediate_or_cancel"
+    assert body["exchange_index"] == rig.remote.market["exchange_index"]
+
+
+async def test_maker_order_uses_market_exchange_and_remains_gtc(rig):
+    body = (await rig.place(rig.trade()))["would_submit"]
+    assert body["post_only"] is True
+    assert body["time_in_force"] == "good_till_canceled"
+    assert body["exchange_index"] == rig.remote.market["exchange_index"]
 
 
 async def test_persisted_halt(rig):
