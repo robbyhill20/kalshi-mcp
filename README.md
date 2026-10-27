@@ -156,9 +156,9 @@ Only whole-contract, whole-cent, $1 binary markets are supported. Quantities are
 
 For a **buy**, the supplied price is the maximum per-contract cost. For a **sell**, it is the minimum proceeds per contract. Selling requires sufficient uncommitted holdings on the chosen side; short-selling is not an intended feature. The API's current single-book representation translates NO prices into the corresponding YES price. All four action/side combinations are tested.
 
-`allow_taker=false` sends `post_only=true`: if the exchange would cross the spread, the exchange can reject it. `allow_taker=true` explicitly permits execution at the caller's exact limit or better. There are no market orders, price increases, side changes, quantity increases, replacements or chasing.
+`allow_taker=false` sends a post-only good-till-canceled limit order: if it would cross the spread, the exchange can reject it. `allow_taker=true` explicitly permits execution at the caller's exact limit or better and uses immediate-or-cancel, so any unfilled remainder is canceled instead of resting on the book. Buy limits remain maximum prices; the server never raises them. The order uses the same exchange index as the validated market and balance preflight. There are no market orders, price increases, side changes, quantity increases, replacements or chasing.
 
-The default owner limits are 100 contracts and $100 gross order collateral, plus an additional conservative **$1 per contract fee reserve**. For 10 YES buys at 47 cents, the precheck requires $14.70 available ($4.70 gross cost + $10 reserve). The reserve is deliberately conservative and is **not Kalshi's actual fee**. The exchange determines actual fees and acceptance. Configure tighter limits if desired; callers cannot override them.
+The default owner limits are 100 contracts and $100 gross order collateral. Before every new order, the server retrieves event and series fee metadata, applies event overrides, calculates maker fees for maker-only orders or a taker upper bound when taking is allowed, rounds up to cents, and adds a one-cent order rounding cushion. For 10 maker-only YES buys at 47 cents with quadratic maker fees and multiplier 1, the precheck requires $4.76 ($4.70 collateral + $0.05 estimated fee + $0.01 cushion). One contract at 1 cent requires $0.03 under that schedule. These are reserves, not fee quotes or actual charges. Missing metadata, unknown models and flat fee schedules block placement. The exchange determines actual fees and acceptance. An optional owner buffer can add more; callers cannot override it.
 
 Resting and recently completed local orders retain additional reservations even though Kalshi's available balance already includes holds. This can reject an otherwise affordable order. Completed reservations clear only after a subsequent balance timestamp is at least two seconds after terminal status was observed. If Kalshi does not advance that timestamp, the reserve stays. Reconcile orders before new execution; do not delete state to bypass a rejection. These safeguards prioritize avoiding overspend over maximizing capacity.
 
@@ -262,7 +262,7 @@ Do not restore an old disk snapshot or delete/reset SQLite to fix a duplicate er
 | `PUBLIC_BASE_URL` | Optional HTTPS origin; on Render omit to use `RENDER_EXTERNAL_URL` |
 | `MAX_CONTRACTS` | `100`; owner order quantity ceiling |
 | `MAX_ORDER_COST_CENTS` | `10000`; gross collateral ceiling, excluding extra fee reserve |
-| `FEE_BUFFER_CENTS_PER_CONTRACT` | `100`; conservative additional reserve, not a fee schedule |
+| `FEE_BUFFER_CENTS_PER_CONTRACT` | `0`; optional extra owner buffer on top of calculated fees and the one-cent rounding cushion |
 | `SNAPSHOT_MAX_AGE_SECONDS` | `5`; entire placement preflight must finish within this window |
 | `API_TIMEOUT_SECONDS` | `10`; no automatic upstream retries |
 | `OAUTH_REDIRECT_HOSTS` | `grok.com,accounts.x.ai,console.x.ai`; exact HTTPS callback hosts only |
