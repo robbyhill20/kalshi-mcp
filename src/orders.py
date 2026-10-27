@@ -28,13 +28,14 @@ class Orders:
         if not self.settings.dry_run and not self.settings.trading_enabled:
             raise Rejection("trading_disabled")
 
-    def body(self, trade):
+    def body(self, trade, exchange_index):
         return {"ticker": trade.ticker, "client_order_id": str(trade.request_id),
                 "side": book_direction(trade), "count": f"{trade.contracts}.00",
-                "price": f"{yes_price(trade):.4f}", "time_in_force": "good_till_canceled",
+                "price": f"{yes_price(trade):.4f}",
+                "time_in_force": "immediate_or_cancel" if trade.allow_taker else "good_till_canceled",
                 "post_only": not trade.allow_taker, "cancel_order_on_pause": True,
                 "self_trade_prevention_type": "taker_at_cross", "subaccount": 0,
-                "exchange_index": -1}
+                "exchange_index": exchange_index}
 
     async def place(self, trade: PlaceOrderInput):
         payload = {**trade.model_dump(mode="json"), "dry_run": self.settings.dry_run,
@@ -111,7 +112,7 @@ class Orders:
             if trade.approval_id is not None:
                 self.db.check_approval(trade.approval_id)
             self.require_placement()
-            body = self.body(trade)
+            body = self.body(trade, index)
             if self.settings.dry_run:
                 result = {"status": "simulated", "request_id": rid,
                           "approval_id": str(trade.approval_id) if trade.approval_id else None,
