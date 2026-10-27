@@ -17,7 +17,7 @@ Buy price is your maximum cost per contract; sell price is your minimum proceeds
 <label>Exact market ticker <input id="ticker" required pattern="[A-Z0-9][A-Z0-9_.-]*"></label>
 <label>Side <select id="side"><option>yes</option><option>no</option></select></label>
 <label>Action <select id="action"><option>buy</option><option>sell</option></select></label>
-<label>Contracts <input id="contracts" type="number" min="1" max="10000" step="1" required></label>
+<label>Contracts <input id="contracts" type="number" min="1" step="1" required></label>
 <label>Limit price, cents <input id="price" type="number" min="1" max="99" step="1" required></label>
 <label class="check"><input id="taker" type="checkbox"> Explicitly allow immediate execution at this limit or better</label>
 <p>The unchecked default requires a maker-only order. No price, side or quantity is changed automatically.</p>
