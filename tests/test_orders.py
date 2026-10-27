@@ -61,6 +61,17 @@ async def test_insufficient_balance_includes_fee_reserve(rig):
     assert (await rig.place())["reason"] == "insufficient_available_balance"
 
 
+async def test_more_than_100_contracts_allowed_within_dollar_limits(rig):
+    result = await rig.place(rig.trade(contracts=101, limit_price_cents=1))
+    assert result["status"] == "simulated"
+    assert result["submitted"] is False
+
+
+async def test_dollar_cap_still_blocks_large_quantity_without_schema_cap(rig):
+    result = await rig.place(rig.trade(contracts=10001, limit_price_cents=1))
+    assert result["reason"] == "owner_order_cost_limit"
+
+
 async def test_duplicate_existing_order(rig):
     order = rig.remote.order()
     rig.remote.orders[order["order_id"]] = order
