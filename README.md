@@ -166,6 +166,12 @@ Market/account REST snapshots can change immediately after validation. The serve
 
 A new sell is also blocked while any local order in that ticker retains a reservation, to avoid selling holdings that an unreflected local order might already have committed. Reconcile the earlier order and wait for account state to catch up; the server never compensates by increasing collateral or changing the order.
 
+### Optional automatic cash allocation
+
+Kalshi divides predictions cash among exchange indexes. The server checks the balance on the market's own index before each order. On `/owner`, **Check current allocation** reads Kalshi's target allocation. The owner-only **Set ongoing 50/50 target** button sets 50% on index 0 (Default) and 50% on index 3 (Tennis, Baseball, Basketball), with Kalshi's `sum` resting-order collateral protection. It replaces the prior allocation: cash on indexes 1 (Combos) and 2 (Crypto & Commodities) becomes eligible to move away, so trades there may lack funds. No MCP tool or Grok bot can change this target.
+
+Kalshi performs subsequent rebalancing itself, about every ten seconds; it does not depend on this server staying online. Its target applies to balances after accounting for resting orders, so the displayed balances are not guaranteed to be exactly equal at every instant or to stay above a fixed dollar minimum. The owner button submits once, then reads Kalshi's setting to confirm it. If the result says `allocation_update_unconfirmed`, check the current allocation before trying again; a timed-out write may already have taken effect. To disable or choose a different target, use Kalshi's official target-allocation API or clearing portal with owner authorization. See [Kalshi's exchange sharding guide](https://docs.kalshi.com/getting_started/exchange_sharding) and [target allocation API](https://docs.kalshi.com/api-reference/portfolio/set-target-balance-allocation).
+
 ### Daily submission ceiling
 
 `MAX_DAILY_ORDER_COST_CENTS=20000` initially limits new submissions to $200 per UTC day,
