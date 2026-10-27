@@ -6,7 +6,7 @@ from uuid import UUID
 from .errors import APIError, Rejection
 from .models import PlaceOrderInput, Ticker
 from .validation import (available_cents, book_direction, estimate_fee_reserve, normalize_order,
-                         validate_account, validate_exchange, validate_market, yes_price)
+                         validate_account, validate_exchange, validate_market, validate_owner_cost, yes_price)
 from pydantic import TypeAdapter
 
 TERMINAL = {"filled", "cancelled", "expired", "rejected"}
@@ -57,6 +57,7 @@ class Orders:
             market = (await self.client.market(trade.ticker))["market"]
             self.db.audit("market_snapshot", request_id=rid, market_snapshot=market, phase="initial")
             validate_market(market, trade)
+            validate_owner_cost(trade, self.settings)
             exchange = await self.client.exchange()
             index = validate_exchange(exchange, market)
             # Fetch every page: a first-page-only duplicate or holdings check is unsafe.

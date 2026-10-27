@@ -63,7 +63,7 @@ class TradeTerms(Input):
     ticker: Ticker
     side: Literal["yes", "no"]
     action: Literal["buy", "sell"]
-    contracts: int = Field(strict=True, ge=1, le=10000)
+    contracts: int = Field(strict=True, ge=1)
     # Buy: maximum cost per contract; sell: minimum proceeds per contract.
     limit_price_cents: int = Field(strict=True, ge=1, le=99)
     allow_taker: bool = Field(default=False, strict=True)

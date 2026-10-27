@@ -139,7 +139,7 @@ class Database:
         return {"limit_cents": limit, "committed_cents": used, "remaining_cents": max(0, limit - used),
                 "resets_at_unix": (int(now) // 86400 + 1) * 86400, "timezone": "UTC"}
 
-    def submitting(self, request_id, reserve, daily_limit=10000):
+    def submitting(self, request_id, reserve, daily_limit=20000):
         with self.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             if c.execute("SELECT halted FROM controls WHERE id=1").fetchone()[0]:
