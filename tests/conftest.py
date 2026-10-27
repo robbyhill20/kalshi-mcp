@@ -23,6 +23,8 @@ class Exchange:
         self.deletes = []
         self.orders = {}
         self.balance = 100000
+        self.event = {"event_ticker": "TEST-EVENT", "series_ticker": "TEST"}
+        self.series = {"ticker": "TEST", "fee_type": "quadratic_with_maker_fees", "fee_multiplier": 1}
         self.positions = []
         self.fail = {}
         self.market_reads = 0
@@ -30,7 +32,7 @@ class Exchange:
         self.place_status = "resting"
         self.fill_count = "0.00"
         self.pages = {}
-        self.market = {"ticker": "TEST-MARKET", "market_type": "binary", "status": "active",
+        self.market = {"ticker": "TEST-MARKET", "event_ticker": "TEST-EVENT", "market_type": "binary", "status": "active",
                        "open_time": "2020-01-01T00:00:00Z", "close_time": "2099-01-01T00:00:00Z",
                        "notional_value_dollars": "1.0000", "exchange_index": 0,
                        "price_ranges": [{"start": "0.00", "end": "1.00", "step": "0.01"}]}
@@ -66,6 +68,10 @@ class Exchange:
             if self.close_on_second_read and self.market_reads > 1:
                 market["status"] = "closed"
             return httpx.Response(200, json={"market": market})
+        if path == "/events/TEST-EVENT":
+            return httpx.Response(200, json={"event": self.event})
+        if path == "/series/TEST":
+            return httpx.Response(200, json={"series": self.series})
         if path == "/markets":
             return httpx.Response(200, json={"markets": [self.market], "cursor": ""})
         if path.endswith("/orderbook"):

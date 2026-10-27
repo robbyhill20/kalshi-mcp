@@ -88,8 +88,8 @@ async def test_reserve_persists_after_fill(rig):
     args = rig.trade()
     await rig.place(args)
     row = rig.db.get(args["request_id"])
-    assert row["reserve_cents"] == 1470
-    assert await rig.orders.outstanding_reserve({"updated_ts": 0}) == 1470
+    assert row["reserve_cents"] == 476
+    assert await rig.orders.outstanding_reserve({"updated_ts": 0}) == 476
 
 
 async def test_startup_recovers_pre_submit_crash(rig):

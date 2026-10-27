@@ -107,7 +107,8 @@ def test_owner_approves_exact_dry_run_over_http(web):
     assert result["structuredContent"]["status"] == "simulated"
 
 
-def test_oauth_pkce_flow_and_refresh(web):
+@pytest.mark.parametrize("consent_origin", [None, "http://localhost:8000", "null"])
+def test_oauth_pkce_flow_and_refresh(web, consent_origin):
     import base64
     client, app, _ = web
     registration = client.post("/register", json={"client_name": "Grok", "redirect_uris": ["https://grok.com/callback"],
@@ -125,9 +126,13 @@ def test_oauth_pkce_flow_and_refresh(web):
     consent_url = response.headers["location"]
     nonce = parse_qs(urlsplit(consent_url).query)["nonce"][0]
     assert client.get(consent_url).status_code == 200
-    response = client.post("/consent", data={"nonce": nonce, "login_token": "r" * 48}, follow_redirects=False)
-    assert response.status_code == 303, response.text
-    callback = parse_qs(urlsplit(response.headers["location"]).query)
+    response = client.post("/consent", data={"nonce": nonce, "login_token": "r" * 48}, follow_redirects=False,
+                           headers={"Origin": consent_origin} if consent_origin else {})
+    assert response.status_code == 200, response.text
+    from html import unescape
+    import re
+    callback_url = unescape(re.search(r'href="([^"]+)"', response.text).group(1))
+    callback = parse_qs(urlsplit(callback_url).query)
     assert callback["state"] == ["test-state"]
     token_params = {"grant_type": "authorization_code", "client_id": client_id, "code": callback["code"][0],
                     "redirect_uri": "https://grok.com/callback", "code_verifier": verifier,
@@ -166,6 +171,20 @@ def test_oauth_redirect_restricted(web):
     assert response.status_code == 400
 
 
+def test_documented_bot_callbacks_can_register_together(web):
+    response = web[0].post("/register", json={"redirect_uris": [
+        "https://www.cursor.com/agents/mcp/oauth/callback", "http://localhost:8787/callback"]})
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize("uri", ["https://www.cursor.com/other", "http://localhost:8788/callback",
+    "http://localhost:8787/other", "http://127.0.0.1:8787/callback",
+    "https://www.cursor.com.evil.test/agents/mcp/oauth/callback",
+    "http://localhost:8787/callback?secret=do-not-log"])
+def test_bot_callback_exception_is_exact(web, uri):
+    assert web[0].post("/register", json={"redirect_uris": [uri]}).status_code == 400
+
+
 def test_no_secrets_in_audit(web, settings):
     client, app, _ = web
     rpc(client, "tools/call", {"name": "kalshi_get_balance", "arguments": {}})
@@ -179,6 +198,25 @@ def test_no_secrets_in_audit(web, settings):
 def test_only_one_worker_per_database(web, settings):
     with pytest.raises(RuntimeError, match="one server worker"):
         create_app(settings)
+
+
+@pytest.mark.parametrize("origin", ["https://evil.test", "https://grok.com"])
+def test_consent_rejects_explicit_foreign_origin(web, origin):
+    response = web[0].post("/consent", data={"nonce": "nonce", "login_token": "r" * 48},
+                            headers={"Origin": origin})
+    assert response.status_code == 403 and response.json()["error"] == "invalid_origin"
+
+
+def test_opaque_origin_consent_requires_browser_nonce(web):
+    response = web[0].post("/consent", data={"nonce": "nonce", "login_token": "r" * 48},
+                            headers={"Origin": "null"})
+    assert response.status_code == 403 and response.json()["error"] == "invalid_consent"
+
+
+def test_opaque_origin_cannot_modify_owner_controls(web):
+    response = web[0].post("/owner/halt", json={"halted": True},
+                            headers={"Origin": "null", "Authorization": "Bearer " + "a" * 48})
+    assert response.status_code == 401
 
 
 async def test_official_mcp_client_round_trip(settings):

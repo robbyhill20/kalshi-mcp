@@ -51,19 +51,19 @@ async def test_supplied_approval_still_checked_in_optional_mode(rig):
 
 async def test_daily_ceiling_blocks_repeated_orders(rig):
     rig.live()
-    rig.settings.max_daily_order_cost_cents = 2000
+    rig.settings.max_daily_order_cost_cents = 500
     assert (await rig.place(instruction(rig)))["status"] == "resting"
     assert (await rig.place(instruction(rig, limit_price_cents=48)))["reason"] == "owner_daily_order_cost_limit"
     assert len(rig.remote.posts) == 1
-    budget = rig.db.daily_budget(2000)
-    assert budget["committed_cents"] == 1470 and budget["remaining_cents"] == 530
+    budget = rig.db.daily_budget(500)
+    assert budget["committed_cents"] == 476 and budget["remaining_cents"] == 24
 
 
 async def test_unknown_submission_keeps_daily_commitment(rig):
     rig.live()
     rig.remote.fail[("POST", "/portfolio/events/orders")] = httpx.ReadTimeout("unknown")
     assert (await rig.place(instruction(rig)))["status"] == "unknown"
-    assert rig.db.daily_budget(10000)["committed_cents"] == 1470
+    assert rig.db.daily_budget(10000)["committed_cents"] == 476
 
 
 async def test_dry_run_does_not_spend_daily_budget(rig):
@@ -75,7 +75,7 @@ async def test_cancel_does_not_refund_daily_budget(rig):
     rig.live()
     placed = await rig.place(instruction(rig))
     await rig.tools.call("kalshi_cancel_order", {"request_id": str(uuid4()), "order_id": placed["order_id"]}, ["read", "trade"])
-    assert rig.db.daily_budget(10000)["committed_cents"] == 1470
+    assert rig.db.daily_budget(10000)["committed_cents"] == 476
 
 
 async def test_definitive_rejection_releases_daily_budget(rig):
@@ -89,7 +89,7 @@ async def test_daily_budget_survives_restart_and_resets_in_utc(rig):
     rig.live()
     await rig.place(instruction(rig))
     db = Database(rig.settings.database_path, "production")
-    assert db.daily_budget(10000)["committed_cents"] == 1470
+    assert db.daily_budget(10000)["committed_cents"] == 476
     assert db.daily_budget(10000, now=time.time() + 86400)["committed_cents"] == 0
 
 
