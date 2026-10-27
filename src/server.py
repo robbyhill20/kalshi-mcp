@@ -176,7 +176,12 @@ def create_app(settings=None, client=None):
 
     async def consent(request):
         if request.method == "POST":
-            if not safe_origin(request):
+            # Redirected / sandboxed OAuth browser navigations may serialize Origin
+            # as the opaque value "null". They still must prove the nonce is bound
+            # to this browser cookie AND authenticate with a connector secret below.
+            # Explicit foreign origins remain forbidden; owner APIs stay stricter.
+            origin = request.headers.get("origin")
+            if origin not in {None, "null", settings.public_base_url}:
                 return JSONResponse({"error": "invalid_origin"}, 403)
             form = await request.form()
             nonce = str(form.get("nonce", ""))
