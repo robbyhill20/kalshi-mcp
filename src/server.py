@@ -1,4 +1,5 @@
 import fcntl
+import hashlib
 import html
 import json
 import time
@@ -174,7 +175,15 @@ def create_app(settings=None, client=None):
             return JSONResponse({"error": "owner_operation_failed"}, 400)
         return JSONResponse({"error": "not_found"}, 404)
 
+    def consent_cookie_name(nonce):
+        # Separate browser binding per login attempt: concurrent Grok popups must
+        # not overwrite one another's cookie. __Host- also prevents domain tossing.
+        prefix = "__Host-kalshi-consent-" if settings.public_base_url.startswith("https:") else "kalshi-consent-"
+        return prefix + hashlib.sha256(nonce.encode()).hexdigest()[:24]
+
     async def consent(request):
+        secure_cookie = settings.public_base_url.startswith("https:")
+        same_site = "none" if secure_cookie else "lax"
         if request.method == "POST":
             # Redirected / sandboxed OAuth browser navigations may serialize Origin
             # as the opaque value "null". They still must prove the nonce is bound
@@ -185,13 +194,20 @@ def create_app(settings=None, client=None):
                 return JSONResponse({"error": "invalid_origin"}, 403)
             form = await request.form()
             nonce = str(form.get("nonce", ""))
-            if not secrets_equal(nonce, request.cookies.get("consent_nonce", "")):
-                return JSONResponse({"error": "invalid_consent"}, 403)
+            if not nonce or not oauth.consent_info(nonce):
+                return JSONResponse({"error": "invalid_consent", "reason": "login_request_expired_or_missing"}, 403)
+            browser_nonce = request.cookies.get(consent_cookie_name(nonce), "")
+            if not browser_nonce:
+                return JSONResponse({"error": "invalid_consent", "reason": "browser_cookie_missing",
+                                     "next_step": "Restart the connection in a regular browser window."}, 403)
+            if not secrets_equal(nonce, browser_nonce):
+                return JSONResponse({"error": "invalid_consent", "reason": "browser_cookie_mismatch"}, 403)
             redirect = oauth.consent(nonce, str(form.get("login_token", "")))
             if not redirect:
                 return HTMLResponse("Invalid connector secret or expired request. Reconnect from Grok.", 403)
             response = RedirectResponse(redirect, status_code=303)
-            response.delete_cookie("consent_nonce")
+            response.delete_cookie(consent_cookie_name(nonce), secure=secure_cookie,
+                                   httponly=True, samesite=same_site)
             return response
         nonce = request.query_params.get("nonce", "")
         pending = oauth.consent_info(nonce)
@@ -210,8 +226,11 @@ def create_app(settings=None, client=None):
                 "<label>Connector secret <input name='login_token' type='password' required autocomplete='off'></label>"
                 "<button>Authorize this connection</button></form></main></body></html>")
         response = HTMLResponse(page)
-        response.set_cookie("consent_nonce", nonce, httponly=True, secure=settings.public_base_url.startswith("https:"),
-                            samesite="lax", max_age=300)
+        # OAuth arrives from another site; Lax withholds the cookie on some
+        # redirected/opaque-origin form POSTs. Only this short-lived nonce cookie
+        # uses SameSite=None, always with Secure, HttpOnly and a host-only path.
+        response.set_cookie(consent_cookie_name(nonce), nonce, httponly=True, secure=secure_cookie,
+                            samesite=same_site, max_age=300, path="/")
         return response
 
     async def asset(request):
