@@ -20,6 +20,8 @@ el("status").onclick = () => call("status");
 el("halt").onclick = () => call("halt", {halted: true});
 el("resume").onclick = () => call("halt", {halted: false});
 el("revoke").onclick = () => call("revoke-sessions", {});
+el("allocation-status").onclick = () => call("allocation");
+el("allocation-set").onclick = () => call("allocation", {target: "equal_default_sports"});
 el("approval").onsubmit = (event) => {
   event.preventDefault();
   call("approvals", {request_id: el("request_id").value, ticker: el("ticker").value,

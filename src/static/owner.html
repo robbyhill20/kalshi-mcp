@@ -9,6 +9,15 @@ Keep the owner token out of Grok. Open the hosted /owner URL after deployment; a
 <button id="resume">Clear emergency stop</button><button id="revoke">Revoke Grok sessions</button></div>
 <p>The emergency stop takes effect before the next submission check. An order already sent may still execute.
 Clearing it does not enable live trading. Cancel existing orders separately in Kalshi or through Sports Director.</p>
+<section><h2>Automatic cash allocation</h2>
+<p>Kalshi can continually rebalance your prediction-market cash. The 50/50 target below assigns 50% to
+exchange 0 (Default) and 50% to exchange 3 (Tennis, Baseball, Basketball). It also moves cash out of
+exchange 1 (Combos) and exchange 2 (Crypto & Commodities) when free to do so. Kalshi keeps collateral
+for resting orders. Displayed balances can differ from 50/50 while orders are open.</p>
+<div class="buttons"><button id="allocation-status">Check current allocation</button>
+<button id="allocation-set">Set ongoing 50/50 target</button></div>
+<p>This is an owner-only account setting. Grok cannot change it. The setting remains active until you change
+or disable it through Kalshi.</p></section>
 <section id="approval-controls"><h2>Optional: approve one exact order</h2><p>This section is only needed when REQUIRE_TRADE_APPROVAL=true.
 Each approval expires after 15 minutes and is usable once.
 Buy price is your maximum cost per contract; sell price is your minimum proceeds per contract.</p>
