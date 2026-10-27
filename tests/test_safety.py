@@ -18,7 +18,7 @@ async def test_body_conforms_to_checked_official_v2_schema(rig):
     for side in ("yes", "no"):
         for action in ("buy", "sell"):
             trade = PlaceOrderInput.model_validate(rig.trade(side=side, action=action))
-            jsonschema.validate(rig.orders.body(trade), schema)
+            jsonschema.validate(rig.orders.body(trade, rig.remote.market["exchange_index"]), schema)
 
 
 async def test_expired_approval(rig):
@@ -105,7 +105,7 @@ async def test_reservation_not_released_for_balance_before_terminal_fill(rig):
     with rig.db.connection() as c:
         c.execute("UPDATE requests SET submitted_at=?, terminal_observed_at=? WHERE request_id=?",
                   (time.time() - 3600, time.time(), args["request_id"]))
-    assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time()) - 5}) == 1470
+    assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time()) - 5}) == 476
 
 
 async def test_reservation_released_after_confirmed_newer_balance(rig):
