@@ -220,6 +220,9 @@ class Orders:
                 payload = json.loads(row["payload"])
                 order = (await self.client.order(payload["order_id"]))["order"]
             self.check_local_identity(row, order)
+            local_placement = self.db.for_order(order["order_id"]) if row["kind"] == "cancel" else None
+            if local_placement:
+                self.check_local_identity(local_placement, order)
             result = {**self.checked_order(order, order["order_id"]), "request_id": rid,
                       "reconciled": True, "submitted": True, "replayed": True}
             # An unconfirmed cancellation must remain unknown while the order is still active.
@@ -227,6 +230,12 @@ class Orders:
                 result = {**result, "observed_status": result["status"], "status": "unknown",
                           "reconciliation_required": True}
             self.db.finish(rid, result, keep_gate=result["status"] == "unknown")
+            # A cancel may have been unknown when it was first attempted. Once
+            # Kalshi confirms a terminal state, release the original placement
+            # gate as well; reconciling the cancel ID alone must be sufficient.
+            if local_placement and result["status"] in TERMINAL:
+                self.db.finish(local_placement["request_id"],
+                               {**result, "request_id": local_placement["request_id"]})
             return result
         except (Rejection, KeyError, ValueError) as exc:
             return {"status": "unknown", "request_id": rid, "order_id": row["order_id"],
