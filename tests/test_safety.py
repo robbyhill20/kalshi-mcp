@@ -88,6 +88,37 @@ async def test_cancel_timeout_is_unknown_and_no_automatic_reissue(rig):
     assert len([key for key, _ in rig.remote.calls if key[0] == "DELETE"]) == 1
 
 
+async def test_reconciling_cancel_id_clears_original_placement_gate(rig):
+    rig.live()
+    placement = rig.trade()
+    placed = await rig.place(placement)
+    oid = placed["order_id"]
+    cancel_id = str(uuid4())
+    original = rig.remote.handle
+
+    async def delayed_cancel_projection(request):
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"order_id": oid})
+        return await original(request)
+
+    await rig.client.close()
+    rig.client.http = httpx.AsyncClient(base_url=rig.settings.api_origin,
+                                        transport=httpx.MockTransport(delayed_cancel_projection))
+    cancelled = await rig.tools.call("kalshi_cancel_order", {"request_id": cancel_id, "order_id": oid},
+                                     ["read", "trade"])
+    assert cancelled["status"] == "unknown"
+    assert rig.db.get(placement["request_id"])["status"] == "unknown"
+    assert (await rig.place())["reason"] == "unresolved_execution_blocks_placement"
+
+    rig.remote.orders[oid].update(status="canceled", remaining_count_fp="0.00")
+    observed = await rig.tools.call("kalshi_get_order", {"request_id": cancel_id}, ["read"])
+    assert observed["status"] == "cancelled"
+    assert rig.db.get(placement["request_id"])["status"] == "cancelled"
+    with rig.db.connection() as conn:
+        assert conn.execute("SELECT count(*) FROM placement_gate").fetchone()[0] == 0
+    assert (await rig.place())["status"] == "resting"
+
+
 async def test_cancel_filled_race_preserves_executed_quantity(rig):
     rig.settings.dry_run = False
     order = rig.remote.order(status="executed", fill_count_fp="10.00", remaining_count_fp="0.00")
