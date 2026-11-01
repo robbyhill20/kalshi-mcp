@@ -34,7 +34,8 @@ class Database:
                     payload TEXT NOT NULL, hash TEXT NOT NULL, status TEXT NOT NULL,
                     result TEXT, order_id TEXT, reserve_cents INTEGER NOT NULL DEFAULT 0,
                     created REAL NOT NULL, submitted_at REAL, terminal_observed_at REAL,
-                    daily_risk_cents INTEGER NOT NULL DEFAULT 0);
+                    daily_risk_cents INTEGER NOT NULL DEFAULT 0,
+                    exchange_index INTEGER);
                 CREATE TABLE IF NOT EXISTS placement_gate (id INTEGER PRIMARY KEY CHECK(id=1), request_id TEXT UNIQUE NOT NULL);
                 CREATE TABLE IF NOT EXISTS order_states (order_id TEXT PRIMARY KEY, state TEXT NOT NULL, updated REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, record TEXT NOT NULL);
@@ -53,6 +54,8 @@ class Database:
                     price = terms["limit_price_cents"]
                     cost = terms["contracts"] * ((price if terms["action"] == "buy" else 100 - price) + 100)
                     c.execute("UPDATE requests SET daily_risk_cents=? WHERE request_id=?", (cost, old["request_id"]))
+            if "exchange_index" not in {r[1] for r in c.execute("PRAGMA table_info(requests)")}:
+                c.execute("ALTER TABLE requests ADD COLUMN exchange_index INTEGER")
             row = c.execute("SELECT value FROM metadata WHERE key='environment'").fetchone()
             if row and row[0] != environment:
                 raise ValueError("Use a separate database for each Kalshi environment")
@@ -139,7 +142,7 @@ class Database:
         return {"limit_cents": limit, "committed_cents": used, "remaining_cents": max(0, limit - used),
                 "resets_at_unix": (int(now) // 86400 + 1) * 86400, "timezone": "UTC"}
 
-    def submitting(self, request_id, reserve, daily_limit=20000):
+    def submitting(self, request_id, reserve, daily_limit=20000, exchange_index=None):
         with self.connection() as c:
             c.execute("BEGIN IMMEDIATE")
             if c.execute("SELECT halted FROM controls WHERE id=1").fetchone()[0]:
@@ -149,8 +152,8 @@ class Database:
                                   (int(now) // 86400 * 86400,)).fetchone()[0]
             if committed + reserve > daily_limit:
                 raise Rejection("owner_daily_order_cost_limit")
-            c.execute("UPDATE requests SET status='submitting', reserve_cents=?, daily_risk_cents=?, submitted_at=? WHERE request_id=?",
-                      (reserve, reserve, now, str(request_id)))
+            c.execute("UPDATE requests SET status='submitting', reserve_cents=?, daily_risk_cents=?, submitted_at=?, exchange_index=? WHERE request_id=?",
+                      (reserve, reserve, now, exchange_index, str(request_id)))
 
     def finish(self, request_id, result, *, reserve=None, keep_gate=False):
         with self.connection() as c:
@@ -187,6 +190,11 @@ class Database:
     def clear_reserve(self, request_id):
         with self.connection() as c:
             c.execute("UPDATE requests SET reserve_cents=0 WHERE request_id=?", (request_id,))
+
+    def set_exchange_index(self, request_id, exchange_index):
+        with self.connection() as c:
+            c.execute("UPDATE requests SET exchange_index=? WHERE request_id=? AND exchange_index IS NULL",
+                      (exchange_index, str(request_id)))
 
     def for_order(self, order_id):
         with self.connection() as c:

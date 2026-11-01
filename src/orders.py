@@ -5,7 +5,7 @@ from uuid import UUID
 
 from .errors import APIError, Rejection
 from .models import PlaceOrderInput, Ticker
-from .validation import (available_cents, book_direction, estimate_fee_reserve, normalize_order,
+from .validation import (available_cents, book_direction, decimal, estimate_fee_reserve, normalize_order,
                          validate_account, validate_exchange, validate_market, validate_owner_cost, yes_price)
 from pydantic import TypeAdapter
 
@@ -64,7 +64,7 @@ class Orders:
             positions = await self.client.all_pages("positions")
             orders = await self.client.all_pages("orders", status="resting")
             balance = await self.client.balance(exchange_index=index)
-            other_reserve = await self.outstanding_reserve(balance)
+            other_reserve = await self.outstanding_reserve(balance, index)
             self.db.audit("account_snapshot", request_id=rid,
                           account_snapshot={"balance": balance, "positions": positions, "open_orders": orders})
             for row in self.db.reservations():
@@ -125,7 +125,7 @@ class Orders:
                 self.db.finish(rid, result, reserve=0)
                 return result
             # Commit durable intent BEFORE calling Kalshi; any interruption after here is ambiguous.
-            self.db.submitting(rid, reserve, self.settings.max_daily_order_cost_cents)
+            self.db.submitting(rid, reserve, self.settings.max_daily_order_cost_cents, exchange_index=index)
             submitted = True
             created = await self.client.create_order(body)
             order_id = str(UUID(created["order_id"]))
@@ -168,11 +168,34 @@ class Orders:
         finally:
             self.inflight.discard(rid)
 
-    async def outstanding_reserve(self, balance):
+    async def outstanding_reserve(self, balance, exchange_index):
         total = 0
         for row in self.db.reservations():
-            # A terminal order can still precede the account API's latest reflected mutation.
+            # Unfilled terminal orders have no balance mutation to wait for.
+            # In particular, cancellation does not advance balance.updated_ts.
             result = json.loads(row["result"]) if row["result"] else {}
+            if (result.get("status") in TERMINAL and result.get("filled_contracts") is not None
+                    and decimal(result["filled_contracts"]) == 0):
+                self.db.clear_reserve(row["request_id"])
+                continue
+            index = row["exchange_index"]
+            if index is None:
+                # Older database rows predate the index column. Resolve their
+                # market's authoritative shard; keep an unresolved reservation
+                # on every shard rather than risk overspending.
+                prior = json.loads(row["payload"])
+                try:
+                    market = (await self.client.market(prior["ticker"]))["market"]
+                    index = market.get("exchange_index")
+                    if market.get("ticker") != prior["ticker"] or type(index) is not int or index < 0:
+                        index = None
+                    else:
+                        self.db.set_exchange_index(row["request_id"], index)
+                except (APIError, KeyError, ValueError):
+                    index = None
+            if index is not None and index != exchange_index:
+                continue
+            # A filled order can precede the account API's latest reflected mutation.
             updated = balance.get("updated_ts")
             if result.get("status") in TERMINAL and isinstance(updated, int) and (
                 row["terminal_observed_at"] is not None and updated >= row["terminal_observed_at"] + 2
