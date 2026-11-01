@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -133,6 +134,10 @@ async def test_reservation_not_released_for_balance_before_terminal_fill(rig):
     rig.remote.fill_count, rig.remote.place_status = "10.00", "executed"
     args = rig.trade()
     await rig.place(args)
+    row = rig.db.get(args["request_id"])
+    result = json.loads(row["result"])
+    result["order"]["last_update_time"] = datetime.now(timezone.utc).isoformat()
+    rig.db.finish(args["request_id"], result)
     with rig.db.connection() as c:
         c.execute("UPDATE requests SET submitted_at=?, terminal_observed_at=? WHERE request_id=?",
                   (time.time() - 3600, time.time(), args["request_id"]))
@@ -145,6 +150,35 @@ async def test_reservation_released_after_confirmed_newer_balance(rig):
     args = rig.trade()
     await rig.place(args)
     assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time()) + 3}, 0) == 0
+
+
+async def test_late_fill_observation_uses_exchange_fill_time(rig):
+    rig.live()
+    rig.remote.fill_count, rig.remote.place_status = "10.00", "executed"
+    args = rig.trade()
+    await rig.place(args)
+    row = rig.db.get(args["request_id"])
+    result = json.loads(row["result"])
+    result["order"]["last_update_time"] = datetime.fromtimestamp(time.time() - 3600, timezone.utc).isoformat()
+    rig.db.finish(args["request_id"], result)
+    with rig.db.connection() as c:
+        c.execute("UPDATE requests SET terminal_observed_at=? WHERE request_id=?",
+                  (time.time() + 3600, args["request_id"]))
+    # Balance is newer than the execution, even though our order-status read
+    # was delayed. The previous implementation held this reserve indefinitely.
+    assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time())}, 0) == 0
+
+
+async def test_submitted_acknowledgement_reconciles_before_reserving(rig):
+    rig.live()
+    args = rig.trade()
+    placed = await rig.place(args)
+    oid = placed["order_id"]
+    with rig.db.connection() as c:
+        c.execute("UPDATE requests SET status='submitted' WHERE request_id=?", (args["request_id"],))
+    rig.remote.orders[oid].update(status="executed", fill_count_fp="10.00", remaining_count_fp="0.00")
+    assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time())}, 0, []) == 0
+    assert rig.db.get(args["request_id"])["status"] == "filled"
 
 
 async def test_reservation_is_scoped_to_its_exchange_index(rig):
