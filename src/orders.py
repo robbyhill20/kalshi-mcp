@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from time import monotonic
 from uuid import UUID
 
@@ -64,7 +65,7 @@ class Orders:
             positions = await self.client.all_pages("positions")
             orders = await self.client.all_pages("orders", status="resting")
             balance = await self.client.balance(exchange_index=index)
-            other_reserve = await self.outstanding_reserve(balance, index)
+            other_reserve = await self.outstanding_reserve(balance, index, orders)
             self.db.audit("account_snapshot", request_id=rid,
                           account_snapshot={"balance": balance, "positions": positions, "open_orders": orders})
             for row in self.db.reservations():
@@ -168,9 +169,25 @@ class Orders:
         finally:
             self.inflight.discard(rid)
 
-    async def outstanding_reserve(self, balance, exchange_index):
+    async def outstanding_reserve(self, balance, exchange_index, open_orders=()):
         total = 0
+        open_ids = {order.get("order_id") for order in open_orders}
         for row in self.db.reservations():
+            if row["status"] not in TERMINAL and row["order_id"] and row["order_id"] not in open_ids:
+                # The local result can be only the POST acknowledgement. If the
+                # order is absent from the complete open-order list, ask Kalshi
+                # for its authoritative status before charging its reserve.
+                try:
+                    order = (await self.client.order(row["order_id"]))["order"]
+                    self.check_local_identity(row, order)
+                    observed = {**self.checked_order(order, row["order_id"]),
+                                "request_id": row["request_id"], "submitted": True}
+                    self.db.finish(row["request_id"], observed,
+                                   keep_gate=observed["status"] == "unknown")
+                    row = self.db.get(row["request_id"])
+                except (APIError, Rejection, KeyError, ValueError):
+                    # A failed status read cannot prove the reserve is free.
+                    pass
             # Unfilled terminal orders have no balance mutation to wait for.
             # In particular, cancellation does not advance balance.updated_ts.
             result = json.loads(row["result"]) if row["result"] else {}
@@ -196,9 +213,16 @@ class Orders:
             if index is not None and index != exchange_index:
                 continue
             # A filled order can precede the account API's latest reflected mutation.
+            # Kalshi's order update time is the fill time. The time *we noticed*
+            # the fill may be hours later and cannot be used for this comparison.
             updated = balance.get("updated_ts")
+            last_update = result.get("order", {}).get("last_update_time")
+            try:
+                filled_at = datetime.fromisoformat(last_update.replace("Z", "+00:00")).timestamp()
+            except (AttributeError, TypeError, ValueError):
+                filled_at = None
             if result.get("status") in TERMINAL and isinstance(updated, int) and (
-                row["terminal_observed_at"] is not None and updated >= row["terminal_observed_at"] + 2
+                filled_at is not None and updated >= filled_at + 2
             ):
                 self.db.clear_reserve(row["request_id"])
             else:
