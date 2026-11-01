@@ -136,7 +136,7 @@ async def test_reservation_not_released_for_balance_before_terminal_fill(rig):
     with rig.db.connection() as c:
         c.execute("UPDATE requests SET submitted_at=?, terminal_observed_at=? WHERE request_id=?",
                   (time.time() - 3600, time.time(), args["request_id"]))
-    assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time()) - 5}) == 476
+    assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time()) - 5}, 0) == 476
 
 
 async def test_reservation_released_after_confirmed_newer_balance(rig):
@@ -144,7 +144,43 @@ async def test_reservation_released_after_confirmed_newer_balance(rig):
     rig.remote.fill_count, rig.remote.place_status = "10.00", "executed"
     args = rig.trade()
     await rig.place(args)
-    assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time()) + 3}) == 0
+    assert await rig.orders.outstanding_reserve({"updated_ts": int(time.time()) + 3}, 0) == 0
+
+
+async def test_reservation_is_scoped_to_its_exchange_index(rig):
+    rig.live()
+    rig.remote.market["exchange_index"] = 3
+    rig.remote.shard3_active = True
+    args = rig.trade()
+    placed = await rig.place(args)
+    assert placed["status"] == "resting"
+    assert rig.db.get(args["request_id"])["exchange_index"] == 3
+    assert await rig.orders.outstanding_reserve({"updated_ts": 0}, 0) == 0
+    assert await rig.orders.outstanding_reserve({"updated_ts": 0}, 3) == 476
+
+
+async def test_legacy_reservation_resolves_market_index(rig):
+    rig.live()
+    rig.remote.market["exchange_index"] = 3
+    rig.remote.shard3_active = True
+    args = rig.trade()
+    await rig.place(args)
+    with rig.db.connection() as c:
+        c.execute("UPDATE requests SET exchange_index=NULL WHERE request_id=?", (args["request_id"],))
+    assert await rig.orders.outstanding_reserve({"updated_ts": 0}, 0) == 0
+    assert rig.db.get(args["request_id"])["exchange_index"] == 3
+    assert await rig.orders.outstanding_reserve({"updated_ts": 0}, 3) == 476
+
+
+async def test_cancelled_unfilled_order_releases_reserve_without_balance_update(rig):
+    rig.live()
+    args = rig.trade()
+    placed = await rig.place(args)
+    oid = placed["order_id"]
+    rig.remote.orders[oid].update(status="canceled", remaining_count_fp="0.00")
+    await rig.tools.call("kalshi_get_order", {"order_id": oid}, ["read"])
+    assert await rig.orders.outstanding_reserve({"updated_ts": 0}, 0) == 0
+    assert rig.db.get(args["request_id"])["reserve_cents"] == 0
 
 
 def test_environment_cannot_change_under_existing_state(rig):

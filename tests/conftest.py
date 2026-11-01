@@ -25,6 +25,7 @@ class Exchange:
         self.target_allocation = {"allocations": [], "resting_margin_reservation": "sum"}
         self.allocation_posts = []
         self.balance = 100000
+        self.shard3_active = False
         self.event = {"event_ticker": "TEST-EVENT", "series_ticker": "TEST"}
         self.series = {"ticker": "TEST", "fee_type": "quadratic_with_maker_fees", "fee_multiplier": 1}
         self.positions = []
@@ -58,7 +59,11 @@ class Exchange:
                 raise value
             return httpx.Response(value, json={"message": "sensitive error body must never be logged"})
         if path == "/exchange/status":
-            return httpx.Response(200, json={"exchange_active": True, "trading_active": True})
+            return httpx.Response(200, json={"exchange_active": True, "trading_active": True,
+                                             "exchange_index_statuses": [
+                                                 {"exchange_index": 0, "exchange_active": True, "trading_active": True},
+                                                 {"exchange_index": 3, "exchange_active": self.shard3_active,
+                                                  "trading_active": self.shard3_active}]})
         if path == "/portfolio/balance":
             return httpx.Response(200, json={"balance": self.balance, "balance_dollars": f"{self.balance / 100:.4f}",
                                             "portfolio_value": 0, "updated_ts": 0})
