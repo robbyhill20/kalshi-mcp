@@ -19,10 +19,11 @@ services:
         value: /var/data/kalshi.sqlite3
       - key: KALSHI_ENV
         value: production
+      # A Blueprint value here overwrites the dashboard on every sync and turns live trading off.
       - key: DRY_RUN
-        value: "true"
+        sync: false
       - key: TRADING_ENABLED
-        value: "false"
+        sync: false
       - key: REQUIRE_TRADE_APPROVAL
         value: "false"
       - key: MAX_DAILY_ORDER_COST_CENTS
