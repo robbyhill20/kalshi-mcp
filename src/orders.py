@@ -38,15 +38,23 @@ class Orders:
                 "self_trade_prevention_type": "taker_at_cross", "subaccount": 0,
                 "exchange_index": exchange_index}
 
-    async def place(self, trade: PlaceOrderInput):
+    async def place(self, trade: PlaceOrderInput, desk="sports"):
+        order_limit = self.settings.axe_max_order_cost_cents if desk == "axe" else None
+        daily_limit = (self.settings.axe_max_daily_order_cost_cents if desk == "axe"
+                       else self.settings.max_daily_order_cost_cents)
+        daily_reason = "axe_daily_order_cost_limit" if desk == "axe" else "owner_daily_order_cost_limit"
         payload = {**trade.model_dump(mode="json"), "dry_run": self.settings.dry_run,
                    "environment": self.settings.kalshi_env}
+        if desk == "axe":
+            payload["desk"] = "axe"
         existing = self.db.get(trade.request_id)
         if not existing:
             self.require_placement()
+            if desk == "axe" and trade.ticker.split("-", 1)[0] not in self.settings.axe_index_series_set:
+                raise Rejection("series_not_allowed")
         existing = self.db.claim(trade.request_id, payload, terms=self.terms(trade),
                                   approval_id=str(trade.approval_id) if trade.approval_id else None,
-                                  require_approval=self.settings.require_trade_approval)
+                                  require_approval=self.settings.require_trade_approval, desk=desk)
         if existing:
             return await self.replay(existing)
         rid = str(trade.request_id)
@@ -58,7 +66,7 @@ class Orders:
             market = (await self.client.market(trade.ticker))["market"]
             self.db.audit("market_snapshot", request_id=rid, market_snapshot=market, phase="initial")
             validate_market(market, trade)
-            validate_owner_cost(trade, self.settings)
+            validate_owner_cost(trade, self.settings, order_limit)
             exchange = await self.client.exchange()
             index = validate_exchange(exchange, market)
             # Fetch every page: a first-page-only duplicate or holdings check is unsafe.
@@ -75,7 +83,7 @@ class Orders:
                     raise Rejection("unreconciled_local_commitment_blocks_sell")
                 if row["status"] not in TERMINAL:
                     prior_trade = PlaceOrderInput.model_validate({k: v for k, v in prior.items()
-                                                                 if k not in {"environment", "dry_run"}})
+                                                                 if k not in {"environment", "dry_run", "desk"}})
                     if (prior_trade.ticker == trade.ticker and book_direction(prior_trade) == book_direction(trade)
                             and yes_price(prior_trade) == yes_price(trade)):
                         raise Rejection("duplicate_existing_local_order")
@@ -89,18 +97,22 @@ class Orders:
             series = (await self.client.series(series_ticker))["series"]
             if series.get("ticker") != series_ticker:
                 raise Rejection("fee_series_ticker_mismatch")
+            if desk == "axe" and series_ticker not in self.settings.axe_index_series_set:
+                raise Rejection("series_not_allowed")
             fees = estimate_fee_reserve(trade, event, series)
             fees["extra_owner_buffer_cents"] = trade.contracts * self.settings.fee_buffer_cents_per_contract
-            reserve = validate_account(trade, positions, orders, self.settings, fees["fee_reserve_cents"])
+            reserve = validate_account(trade, positions, orders, self.settings, fees["fee_reserve_cents"], order_limit)
             self.db.audit("preflight_snapshot", request_id=rid, calling_tool="kalshi_place_order",
                           inputs=trade.model_dump(mode="json"), market_snapshot=market,
                           account_snapshot={"balance": balance, "positions": positions, "open_orders": orders},
                           validation_results={"required_cents": reserve, "local_reservations_cents": other_reserve,
                                               "fee_calculation": fees}, fee_snapshot={"event": event, "series": series})
+            # Shard cash is one pool. Reserves from every desk on this exchange_index reduce it.
+            # Daily ledgers stay split, so Axe's cap cannot consume the sports daily budget.
             if reserve > available_cents(balance) - other_reserve:
                 raise Rejection("insufficient_available_balance")
-            if reserve > self.db.daily_budget(self.settings.max_daily_order_cost_cents)["remaining_cents"]:
-                raise Rejection("owner_daily_order_cost_limit")
+            if reserve > self.db.daily_budget(daily_limit, desk=desk)["remaining_cents"]:
+                raise Rejection(daily_reason)
             # Fetch again immediately before submission; never act on a cached market.
             market = (await self.client.market(trade.ticker))["market"]
             self.db.audit("market_snapshot", request_id=rid, market_snapshot=market, phase="before_submission")
@@ -126,7 +138,7 @@ class Orders:
                 self.db.finish(rid, result, reserve=0)
                 return result
             # Commit durable intent BEFORE calling Kalshi; any interruption after here is ambiguous.
-            self.db.submitting(rid, reserve, self.settings.max_daily_order_cost_cents, exchange_index=index)
+            self.db.submitting(rid, reserve, daily_limit, exchange_index=index)
             submitted = True
             created = await self.client.create_order(body)
             order_id = str(UUID(created["order_id"]))
@@ -289,7 +301,9 @@ class Orders:
                     "reason": exc.code if isinstance(exc, Rejection) else "reconciliation_failed",
                     "reconciliation_required": True, "submitted": None}
 
-    async def get_order(self, args):
+    async def get_order(self, args, desk="sports"):
+        if desk == "axe" and not self._axe_event_order(args.order_id, args.request_id):
+            raise Rejection("order_not_placed_by_axe")
         if args.request_id:
             row = self.db.get(args.request_id)
             if not row:
@@ -311,7 +325,13 @@ class Orders:
                            keep_gate=result["status"] == "unknown")
         return result
 
-    async def cancel(self, args):
+    def _axe_event_order(self, order_id, request_id):
+        row = self.db.get(request_id) if request_id else self.db.for_order(str(order_id))
+        return bool(row and row["desk"] == "axe" and row["kind"] == "place")
+
+    async def cancel(self, args, desk="sports"):
+        if desk == "axe" and not self._axe_event_order(args.order_id, None):
+            raise Rejection("order_not_placed_by_axe")
         payload = {**args.model_dump(mode="json"), "dry_run": self.settings.dry_run,
                    "environment": self.settings.kalshi_env}
         existing = self.db.claim(args.request_id, payload, kind="cancel")

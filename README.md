@@ -1,6 +1,6 @@
 # Kalshi → Grok MCP
 
-A private execution connector between Grok and the official Kalshi API. It exposes exactly seven read tools and two execution tools. It contains no betting strategy, market selection, probability estimates, sizing strategy or generic API tool.
+A private execution connector between Grok and the official Kalshi API. The sports reader sees seven read tools. Sports Director sees those plus two execution tools. A separate Axe credential can trade an allowlisted set of index series and, only when margin credentials are configured, equity perpetuals. It contains no betting strategy, market selection, probability estimates, sizing strategy or generic API tool.
 
 **Initial settings: `DRY_RUN=true` and `TRADING_ENABLED=false`. No live trading is enabled by this repository.**
 
@@ -30,7 +30,9 @@ Grok bots ──HTTPS + OAuth/Bearer──► Your managed MCP service ──sig
 | `kalshi_place_order` | Exact limit order under owner policy, or validated dry run |
 | `kalshi_cancel_order` | Cancel remaining contracts on one order, or simulate in dry run |
 
-The reader credential discovers only the seven read tools. The director credential discovers all nine. Write authorization is checked again when a tool is called, even if someone bypasses discovery. A bot claiming to be Sports Director does not grant it permissions.
+The reader credential discovers only the seven read tools. The director credential discovers all nine event-contract tools. Axe discovers the same nine, and the margin tools only after perps are enabled. Write authorization is checked again when a tool is called, even if someone bypasses discovery. A bot claiming to be Sports Director does not grant it permissions. Axe cannot cancel the director's orders, and the director token is not granted Axe's perpetual orders.
+
+Index series such as `KXINX` trade on Kalshi exchange shard 0. That shard also holds 40% of the sports balance allocation. Axe and sports share that cash. Each desk has its own daily ledger, and an Axe order reserves its cost on shard 0 so a later sports order on that shard sees less available cash. Axe cannot spend past its own caps, and its spend does not reduce the sports daily budget. Sports orders on other shards do not see Axe's shard 0 reserve.
 
 ## Deploy on Render — your Mac can be off
 
