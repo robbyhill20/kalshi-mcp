@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from decimal import ROUND_CEILING, Decimal
 from time import monotonic
 from uuid import UUID
@@ -13,6 +14,29 @@ def perp_ticker_allowed(ticker, symbols):
         return False
     symbol, _, generation = ticker[2:].partition("PERP")
     return bool(symbol and symbol in symbols and generation.isdigit())
+
+
+def perp_terms(order, settings):
+    return {**order.model_dump(mode="json", exclude={"approval_id"}),
+            "environment": settings.kalshi_env, "dry_run": settings.dry_run}
+
+
+def mark_price(market, max_age_seconds, now_ms=None):
+    # A low ask is allowed to fill near the mark, not at its limit.
+    quoted = market.get("settlement_mark_price")
+    if not isinstance(quoted, dict):
+        raise Rejection("missing_mark_price")
+    ts = quoted.get("ts_ms")
+    if type(ts) is not int or quoted.get("price") is None:
+        raise Rejection("missing_mark_price")
+    now_ms = time.time_ns() // 1_000_000 if now_ms is None else now_ms
+    age_ms = now_ms - ts
+    if age_ms < 0 or age_ms > max_age_seconds * 1000:
+        raise Rejection("stale_mark_price")
+    mark = decimal(quoted["price"])
+    if mark <= 0:
+        raise Rejection("missing_mark_price")
+    return mark
 
 
 def margin_order_state(order):
@@ -59,7 +83,42 @@ class PerpOrders:
             body["market_version"] = version
         return body
 
-    def validate(self, order, market, positions, balance):
+    def terms(self, order):
+        return perp_terms(order, self.settings)
+
+    def open_exposure(self, order, open_orders):
+        axe_ids = self.db.request_ids_for("axe", "perp_place")
+        exposure = Decimal(0)
+        seen = set()
+        for row in open_orders:
+            client_id = row.get("client_order_id")
+            if row.get("ticker") not in {None, order.ticker} or client_id not in axe_ids:
+                continue
+            if client_id == str(order.request_id):
+                continue
+            remaining = decimal(row.get("remaining_count") or "0")
+            if remaining <= 0:
+                continue
+            side = row.get("side")
+            if side not in {"bid", "ask"}:
+                raise Rejection("unrecognized_existing_order_direction")
+            exposure += remaining if side == "bid" else -remaining
+            seen.add(client_id)
+        for row in self.db.rows_for("axe", "perp_place"):
+            if row["request_id"] in seen or row["request_id"] == str(order.request_id):
+                continue
+            if row["status"] in {"filled", "cancelled", "expired", "rejected", "simulated"}:
+                continue
+            payload = json.loads(row["payload"])
+            if payload.get("ticker") != order.ticker or payload.get("side") not in {"bid", "ask"}:
+                continue
+            remaining = decimal(payload.get("count") or "0")
+            if remaining <= 0:
+                continue
+            exposure += remaining if payload["side"] == "bid" else -remaining
+        return exposure
+
+    def validate(self, order, market, positions, balance, open_orders):
         if market.get("ticker") != order.ticker:
             raise Rejection("market_ticker_mismatch")
         if market.get("status") != "active":
@@ -82,13 +141,16 @@ class PerpOrders:
         minimum = market.get("minimum_quantity")
         if minimum is not None and count < decimal(minimum):
             raise Rejection("below_minimum_quantity")
-        # Get Risk defines position notional as |qty| * mark price. Demo equity prices
-        # are already the contract price, so contract_size is not a second multiplier.
-        notional = count * price
+        # Position notional is |qty| * mark. A crossing order fills near the mark,
+        # so a limit below the mark must not shrink the cap. contract_size is already
+        # inside the quoted contract price.
+        mark = mark_price(market, self.settings.snapshot_max_age_seconds)
+        exposure_price = max(price, mark)
+        notional = count * exposure_price
         notional_cents = int((notional * 100).to_integral_value(rounding=ROUND_CEILING))
         if notional_cents > self.settings.axe_perp_max_order_notional_cents:
             raise Rejection("axe_perp_order_notional_limit")
-        current = Decimal(0)
+        current = self.open_exposure(order, open_orders)
         for row in positions:
             if row.get("market_ticker") == order.ticker and row.get("subaccount") in {None, 0}:
                 current += decimal(row.get("position"))
@@ -99,7 +161,7 @@ class PerpOrders:
         if increasing:
             equity = decimal(sub.get("account_equity"))
             # The create-order body has no leverage field. This is our exposure cap.
-            if equity <= 0 or abs(new_position) * price > self.settings.axe_perp_max_leverage * equity:
+            if equity <= 0 or abs(new_position) * exposure_price > self.settings.axe_perp_max_leverage * equity:
                 raise Rejection("perp_leverage_cap")
             if notional / self.settings.axe_perp_max_leverage > decimal(sub.get("available_balance")):
                 raise Rejection("insufficient_margin_balance")
@@ -113,7 +175,9 @@ class PerpOrders:
         existing = self.db.get(order.request_id)
         if not existing:
             self.require_placement()
-        existing = self.db.claim(order.request_id, payload, kind="perp_place", require_approval=False, desk="axe")
+        existing = self.db.claim(order.request_id, payload, kind="perp_place", terms=self.terms(order),
+                                 approval_id=str(order.approval_id) if order.approval_id else None,
+                                 require_approval=self.settings.require_trade_approval, desk="axe")
         if existing:
             return await self.replay(existing)
         rid = str(order.request_id)
@@ -126,17 +190,21 @@ class PerpOrders:
             self.db.audit("market_snapshot", request_id=rid, market_snapshot=market, phase="initial")
             positions = (await self.margin.positions(ticker=order.ticker)).get("positions") or []
             balance = await self.margin.balance()
-            if not isinstance(positions, list):
+            listed = await self.margin.orders(ticker=order.ticker, status="resting")
+            open_orders = listed.get("orders") if isinstance(listed, dict) else None
+            if not isinstance(positions, list) or not isinstance(open_orders, list):
                 raise Rejection("invalid_margin_positions")
-            reserve, count, price = self.validate(order, market, positions, balance)
+            reserve, count, price = self.validate(order, market, positions, balance, open_orders)
             limit = self.settings.axe_perp_max_daily_notional_cents
             if reserve > self.db.daily_budget(limit, desk="axe", kind="perp_place")["remaining_cents"]:
                 raise Rejection("perp_daily_notional_limit")
             market = (await self.margin.market(order.ticker))["market"]
             self.db.audit("market_snapshot", request_id=rid, market_snapshot=market, phase="before_submission")
-            self.validate(order, market, positions, balance)
+            self.validate(order, market, positions, balance, open_orders)
             if monotonic() - started > self.settings.snapshot_max_age_seconds:
                 raise Rejection("account_snapshot_stale")
+            if order.approval_id is not None:
+                self.db.check_approval(order.approval_id)
             self.require_placement()
             body = self.body(order, market, count, price)
             if self.settings.dry_run:

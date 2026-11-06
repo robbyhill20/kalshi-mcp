@@ -31,7 +31,8 @@ from .database import Database
 from .errors import APIError
 from .kalshi_client import KalshiClient, MarginClient
 from .logging_config import configure_logging
-from .models import ApprovalInput, KillInput, PERP_READ, PERP_WRITE, TOOL_MODELS, WRITE_TOOLS
+from .models import ApprovalInput, KillInput, PERP_READ, PERP_WRITE, PlacePerpInput, TOOL_MODELS, WRITE_TOOLS
+from .perps import perp_terms
 from .orders import Orders
 from .tools import Tools
 
@@ -226,8 +227,12 @@ def create_app(settings=None, client=None):
                 return JSONResponse({"default_combos_sports_target_active": True,
                                      "target_allocation": current})
             if action == "approvals" and request.method == "POST":
-                args = ApprovalInput.model_validate(await request.json())
-                terms = orders.terms(args)
+                body = await request.json()
+                try:
+                    args = ApprovalInput.model_validate(body)
+                    terms = orders.terms(args)
+                except ValidationError:
+                    terms = perp_terms(PlacePerpInput.model_validate(body), settings)
                 aid = db.approve(terms)
                 return JSONResponse({"approval_id": aid, "expires_in_seconds": 900, "approved_terms": terms})
             if action == "halt" and request.method == "POST":

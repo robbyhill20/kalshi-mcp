@@ -107,6 +107,7 @@ class PlacePerpInput(UUIDInput):
     time_in_force: Literal["fill_or_kill", "good_till_canceled", "immediate_or_cancel"] = "good_till_canceled"
     post_only: bool = Field(default=False, strict=True)
     reduce_only: bool = Field(default=False, strict=True)
+    approval_id: UUID | None = None
 
 
 class CancelPerpInput(UUIDInput):

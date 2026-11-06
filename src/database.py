@@ -119,7 +119,7 @@ class Database:
                     "AND status IN ('validating', 'submitting', 'unknown')"
                 ).fetchone()):
                     raise Rejection("unresolved_execution_blocks_placement")
-            if kind == "place" and (require_approval or approval_id is not None):
+            if kind in {"place", "perp_place"} and (require_approval or approval_id is not None):
                 approval = c.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
                 if not approval or approval["expires"] < time.time() or approval["terms"] != canonical(terms):
                     raise Rejection("missing_expired_or_mismatched_owner_approval")
@@ -217,6 +217,11 @@ class Database:
         with self.connection() as c:
             return {row[0] for row in c.execute(
                 "SELECT request_id FROM requests WHERE desk=? AND kind=?", (desk, kind))}
+
+    def rows_for(self, desk, kind):
+        with self.connection() as c:
+            return [dict(row) for row in c.execute(
+                "SELECT * FROM requests WHERE desk=? AND kind=?", (desk, kind))]
 
     def recover_validating(self):
         """Only at startup, after the server has acquired the exclusive process lock."""

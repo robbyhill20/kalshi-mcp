@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+import time
+
 import httpx
 import pytest
 from pydantic import SecretStr
@@ -182,11 +184,18 @@ class MarginBook:
         self.available = "1000.00"
         self.positions = []
         self.fractional = False
+        self.mark_price = "7.1777"
+        self.mark_ts_ms = None
+        self.omit_mark = False
 
     def market(self):
-        return {"ticker": "KXTSLAPERP1", "status": "active", "tick_size": "0.0001",
+        body = {"ticker": "KXTSLAPERP1", "status": "active", "tick_size": "0.0001",
                 "fractional_trading_enabled": self.fractional, "contract_size": "0.020000",
                 "market_version": 1, "schedule": None, "price": "7.1777", "minimum_quantity": "1.00"}
+        if not self.omit_mark:
+            ts = time.time_ns() // 1_000_000 if self.mark_ts_ms is None else self.mark_ts_ms
+            body["settlement_mark_price"] = {"price": self.mark_price, "ts_ms": ts}
+        return body
 
     async def handle(self, request):
         path = request.url.path
@@ -234,6 +243,7 @@ def arm_margin(rig, book=None):
     book = book or MarginBook()
     pem = rig.settings.kalshi_private_key.get_secret_value()
     rig.settings.perps_enabled = True
+    rig.settings.require_trade_approval = False
     rig.settings.kalshi_margin_api_key_id = SecretStr("margin-key")
     rig.settings.kalshi_margin_private_key = SecretStr(pem)
     margin = MarginClient(rig.settings, httpx.MockTransport(book.handle))
@@ -309,6 +319,56 @@ async def test_perp_gates_match_event_orders(rig):
     rig.settings.trading_enabled = False
     assert (await rig.tools.call("kalshi_place_perp_order", perp(), AXE))["reason"] == "trading_disabled"
     assert not book.posts
+
+
+@pytest.mark.parametrize("side", ["bid", "ask"])
+async def test_perp_exposure_uses_mark_not_a_far_limit(rig, side):
+    book = arm_margin(rig)
+    book.mark_price = "7.0000"
+    book.equity = "50.00"
+    book.available = "100000.00"
+    result = await rig.tools.call("kalshi_place_perp_order", perp(side=side, count="10", price="0.0100"), AXE)
+    assert result["reason"] == "perp_leverage_cap"
+    assert not book.posts
+
+
+async def test_resting_axe_perps_count_toward_leverage(rig):
+    book = arm_margin(rig)
+    rig.live()
+    book.equity = "100.00"
+    book.available = "100000.00"
+    first = await rig.tools.call("kalshi_place_perp_order", perp(count="10", price="7.1777"), AXE)
+    assert first["status"] == "resting"
+    second = await rig.tools.call("kalshi_place_perp_order", perp(count="10", price="7.1777"), AXE)
+    assert second["reason"] == "perp_leverage_cap"
+    assert len(book.posts) == 1
+
+
+async def test_missing_or_stale_mark_fails_closed(rig):
+    book = arm_margin(rig)
+    book.omit_mark = True
+    missing = await rig.tools.call("kalshi_place_perp_order", perp(), AXE)
+    assert missing["reason"] == "missing_mark_price"
+    book.omit_mark = False
+    book.mark_ts_ms = 0
+    stale = await rig.tools.call("kalshi_place_perp_order", perp(), AXE)
+    assert stale["reason"] == "stale_mark_price"
+    assert not book.posts
+
+
+async def test_perp_place_honors_approval_flag(rig):
+    book = arm_margin(rig)
+    rig.settings.require_trade_approval = True
+    denied = await rig.tools.call("kalshi_place_perp_order", perp(), AXE)
+    assert denied["reason"] == "missing_expired_or_mismatched_owner_approval"
+    assert not book.calls
+    from src.models import PlacePerpInput
+    args = perp()
+    approved = PlacePerpInput.model_validate(args)
+    args["approval_id"] = rig.db.approve(rig.tools.perps.terms(approved))
+    assert (await rig.tools.call("kalshi_place_perp_order", args, AXE))["status"] == "simulated"
+    rig.settings.require_trade_approval = False
+    assert (await rig.tools.call("kalshi_place_perp_order", perp(), AXE))["status"] == "simulated"
 
 
 @pytest.mark.parametrize("symbol", ["TSLA", "NVDA", "AAPL"])
