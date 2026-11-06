@@ -95,16 +95,17 @@ def estimate_fee_reserve(trade, event, series):
             "fee_reserve_cents": fee_cents + 1}
 
 
-def validate_owner_cost(trade, settings):
+def validate_owner_cost(trade, settings, limit_cents=None):
     # Reserve gross collateral even when an order might reduce other exposure.
     cost = trade.contracts * (trade.limit_price_cents if trade.action == "buy" else 100 - trade.limit_price_cents)
-    if cost > settings.max_order_cost_cents:
-        raise Rejection("owner_order_cost_limit")
+    limit = settings.max_order_cost_cents if limit_cents is None else limit_cents
+    if cost > limit:
+        raise Rejection("owner_order_cost_limit" if limit_cents is None else "axe_order_cost_limit")
     return cost
 
 
-def validate_account(trade, positions, orders, settings, fee_reserve_cents):
-    cost = validate_owner_cost(trade, settings)
+def validate_account(trade, positions, orders, settings, fee_reserve_cents, order_limit_cents=None):
+    cost = validate_owner_cost(trade, settings, order_limit_cents)
     for order in orders:
         if order.get("ticker") != trade.ticker:
             continue

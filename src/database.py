@@ -56,6 +56,8 @@ class Database:
                     c.execute("UPDATE requests SET daily_risk_cents=? WHERE request_id=?", (cost, old["request_id"]))
             if "exchange_index" not in {r[1] for r in c.execute("PRAGMA table_info(requests)")}:
                 c.execute("ALTER TABLE requests ADD COLUMN exchange_index INTEGER")
+            if "desk" not in {r[1] for r in c.execute("PRAGMA table_info(requests)")}:
+                c.execute("ALTER TABLE requests ADD COLUMN desk TEXT NOT NULL DEFAULT 'sports'")
             row = c.execute("SELECT value FROM metadata WHERE key='environment'").fetchone()
             if row and row[0] != environment:
                 raise ValueError("Use a separate database for each Kalshi environment")
@@ -100,7 +102,8 @@ class Database:
             row = c.execute("SELECT * FROM requests WHERE request_id=?", (str(request_id),)).fetchone()
             return dict(row) if row else None
 
-    def claim(self, request_id, payload, *, terms=None, approval_id=None, kind="place", require_approval=True):
+    def claim(self, request_id, payload, *, terms=None, approval_id=None, kind="place",
+              require_approval=True, desk="sports"):
         """Reserve IDs and a global placement gate in one durable transaction, before any HTTP write."""
         request_id = str(request_id)
         with self.connection() as c:
@@ -110,21 +113,24 @@ class Database:
                 if existing["hash"] != digest(payload) or existing["kind"] != kind:
                     raise Rejection("request_id_conflict")
                 return dict(existing)
-            if kind == "place":
+            if kind in {"place", "perp_place"}:
                 if (c.execute("SELECT 1 FROM placement_gate").fetchone() or c.execute(
-                    "SELECT 1 FROM requests WHERE kind='place' AND status IN ('validating', 'submitting', 'unknown')"
+                    "SELECT 1 FROM requests WHERE kind IN ('place', 'perp_place') "
+                    "AND status IN ('validating', 'submitting', 'unknown')"
                 ).fetchone()):
                     raise Rejection("unresolved_execution_blocks_placement")
-                if require_approval or approval_id is not None:
-                    approval = c.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
-                    if not approval or approval["expires"] < time.time() or approval["terms"] != canonical(terms):
-                        raise Rejection("missing_expired_or_mismatched_owner_approval")
-                    if c.execute("SELECT 1 FROM requests WHERE approval_id=?", (approval_id,)).fetchone():
-                        raise Rejection("approval_already_used")
-            c.execute("INSERT INTO requests(request_id, approval_id, kind, payload, hash, status, created) "
-                      "VALUES (?, ?, ?, ?, ?, 'validating', ?)",
-                      (request_id, approval_id, kind, canonical(payload), digest(payload), time.time()))
-            if kind == "place":
+            if kind == "place" and (require_approval or approval_id is not None):
+                approval = c.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+                if not approval or approval["expires"] < time.time() or approval["terms"] != canonical(terms):
+                    raise Rejection("missing_expired_or_mismatched_owner_approval")
+                if c.execute("SELECT 1 FROM requests WHERE approval_id=?", (approval_id,)).fetchone():
+                    raise Rejection("approval_already_used")
+            if desk not in {"sports", "axe"}:
+                raise Rejection("invalid_desk")
+            c.execute("INSERT INTO requests(request_id, approval_id, kind, payload, hash, status, created, desk) "
+                      "VALUES (?, ?, ?, ?, ?, 'validating', ?, ?)",
+                      (request_id, approval_id, kind, canonical(payload), digest(payload), time.time(), desk))
+            if kind in {"place", "perp_place"}:
                 c.execute("INSERT INTO placement_gate VALUES (1, ?)", (request_id,))
         return None
 
@@ -134,13 +140,14 @@ class Database:
             if not row or row[0] < time.time():
                 raise Rejection("owner_approval_expired")
 
-    def daily_budget(self, limit, now=None):
+    def daily_budget(self, limit, now=None, desk="sports", kind="place"):
         now = time.time() if now is None else now
         with self.connection() as c:
-            used = c.execute("SELECT COALESCE(SUM(daily_risk_cents), 0) FROM requests WHERE submitted_at>=?",
-                             (int(now) // 86400 * 86400,)).fetchone()[0]
+            used = c.execute("SELECT COALESCE(SUM(daily_risk_cents), 0) FROM requests "
+                             "WHERE submitted_at>=? AND desk=? AND kind=?",
+                             (int(now) // 86400 * 86400, desk, kind)).fetchone()[0]
         return {"limit_cents": limit, "committed_cents": used, "remaining_cents": max(0, limit - used),
-                "resets_at_unix": (int(now) // 86400 + 1) * 86400, "timezone": "UTC"}
+                "resets_at_unix": (int(now) // 86400 + 1) * 86400, "timezone": "UTC", "desk": desk, "kind": kind}
 
     def submitting(self, request_id, reserve, daily_limit=20000, exchange_index=None):
         with self.connection() as c:
@@ -148,10 +155,14 @@ class Database:
             if c.execute("SELECT halted FROM controls WHERE id=1").fetchone()[0]:
                 raise Rejection("owner_kill_switch_active")
             now = time.time()
-            committed = c.execute("SELECT COALESCE(SUM(daily_risk_cents), 0) FROM requests WHERE submitted_at>=?",
-                                  (int(now) // 86400 * 86400,)).fetchone()[0]
+            row = c.execute("SELECT desk, kind FROM requests WHERE request_id=?", (str(request_id),)).fetchone()
+            committed = c.execute("SELECT COALESCE(SUM(daily_risk_cents), 0) FROM requests "
+                                  "WHERE submitted_at>=? AND desk=? AND kind=?",
+                                  (int(now) // 86400 * 86400, row["desk"], row["kind"])).fetchone()[0]
             if committed + reserve > daily_limit:
-                raise Rejection("owner_daily_order_cost_limit")
+                if row["kind"] == "perp_place":
+                    raise Rejection("perp_daily_notional_limit")
+                raise Rejection("axe_daily_order_cost_limit" if row["desk"] == "axe" else "owner_daily_order_cost_limit")
             c.execute("UPDATE requests SET status='submitting', reserve_cents=?, daily_risk_cents=?, submitted_at=?, exchange_index=? WHERE request_id=?",
                       (reserve, reserve, now, exchange_index, str(request_id)))
 
@@ -169,7 +180,7 @@ class Database:
                           (time.time(), str(request_id)))
             if keep_gate:
                 row = c.execute("SELECT kind FROM requests WHERE request_id=?", (str(request_id),)).fetchone()
-                if row and row[0] == "place":
+                if row and row[0] in {"place", "perp_place"}:
                     c.execute("INSERT OR IGNORE INTO placement_gate VALUES (1, ?)", (str(request_id),))
             else:
                 c.execute("DELETE FROM placement_gate WHERE request_id=?", (str(request_id),))
@@ -196,10 +207,16 @@ class Database:
             c.execute("UPDATE requests SET exchange_index=? WHERE request_id=? AND exchange_index IS NULL",
                       (exchange_index, str(request_id)))
 
-    def for_order(self, order_id):
+    def for_order(self, order_id, kind="place"):
         with self.connection() as c:
-            row = c.execute("SELECT * FROM requests WHERE order_id=? AND kind='place'", (str(order_id),)).fetchone()
+            row = c.execute("SELECT * FROM requests WHERE order_id=? AND kind=?",
+                            (str(order_id), kind)).fetchone()
             return dict(row) if row else None
+
+    def request_ids_for(self, desk, kind):
+        with self.connection() as c:
+            return {row[0] for row in c.execute(
+                "SELECT request_id FROM requests WHERE desk=? AND kind=?", (desk, kind))}
 
     def recover_validating(self):
         """Only at startup, after the server has acquired the exclusive process lock."""

@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 
 SENSITIVE = {"private_key", "kalshi_private_key", "kalshi_api_key_id", "authorization",
              "signature", "token", "access_token", "refresh_token", "client_secret",
-             "admin_token", "mcp_read_token", "mcp_director_token"}
+             "admin_token", "mcp_read_token", "mcp_director_token", "mcp_axe_token",
+             "kalshi_margin_api_key_id", "kalshi_margin_private_key"}
 
 
 def sanitize(value):

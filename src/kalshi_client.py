@@ -14,11 +14,12 @@ API_ROOT = "/trade-api/v2"
 class KalshiClient:
     """Fixed endpoint methods only. No public generic request method or mutation retry."""
 
-    def __init__(self, settings, transport=None):
+    def __init__(self, settings, transport=None, *, api_key_id=None, private_key=None):
         self.settings = settings
+        self._api_key_id = (api_key_id or settings.kalshi_api_key_id).get_secret_value()
+        pem = (private_key or settings.kalshi_private_key).get_secret_value()
         try:
-            self._key = serialization.load_pem_private_key(
-                settings.kalshi_private_key.get_secret_value().replace("\\n", "\n").encode(), None)
+            self._key = serialization.load_pem_private_key(pem.replace("\\n", "\n").encode(), None)
         except (ValueError, TypeError):
             raise ValueError("Invalid Kalshi PEM private key") from None
         if not isinstance(self._key, (ed25519.Ed25519PrivateKey, rsa.RSAPrivateKey)):
@@ -38,7 +39,7 @@ class KalshiClient:
             signature = self._key.sign(message, padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
                                                           salt_length=padding.PSS.DIGEST_LENGTH),
                                        hashes.SHA256())
-        return {"KALSHI-ACCESS-KEY": self.settings.kalshi_api_key_id.get_secret_value(),
+        return {"KALSHI-ACCESS-KEY": self._api_key_id,
                 "KALSHI-ACCESS-TIMESTAMP": timestamp,
                 "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode()}
 
@@ -137,3 +138,38 @@ class KalshiClient:
                 raise APIError("invalid_pagination")
             seen.add(cursor)
         raise APIError("pagination_limit_exceeded")
+
+
+class MarginClient(KalshiClient):
+    def __init__(self, settings, transport=None):
+        super().__init__(settings, transport, api_key_id=settings.kalshi_margin_api_key_id,
+                         private_key=settings.kalshi_margin_private_key)
+
+    async def markets(self, status=None):
+        params = {"status": status} if status else None
+        return await self._request("GET", "/margin/markets", params=params)
+
+    async def market(self, ticker):
+        return await self._request("GET", f"/margin/markets/{ticker}")
+
+    async def orderbook(self, ticker, depth=0):
+        return await self._request("GET", f"/margin/markets/{ticker}/orderbook", params={"depth": depth})
+
+    async def positions(self, ticker=None):
+        params = {"ticker": ticker} if ticker else None
+        return await self._request("GET", "/margin/positions", params=params)
+
+    async def balance(self):
+        return await self._request("GET", "/margin/balance", params={"compute_available_balance": "true"})
+
+    async def orders(self, **params):
+        return await self._request("GET", "/margin/orders", params=params)
+
+    async def order(self, order_id):
+        return await self._request("GET", f"/margin/orders/{order_id}")
+
+    async def create_order(self, body):
+        return await self._request("POST", "/margin/orders", body=body)
+
+    async def cancel_order(self, order_id, ticker=None):
+        return await self._request("DELETE", f"/margin/orders/{order_id}")

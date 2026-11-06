@@ -3,21 +3,37 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from .errors import APIError, Rejection
-from .models import TOOL_MODELS, WRITE_TOOLS
+from .models import PERP_READ, PERP_WRITE, TOOL_MODELS, WRITE_TOOLS
+from .perps import PerpOrders
 
 
 class Tools:
-    def __init__(self, settings, client, db, orders):
+    def __init__(self, settings, client, db, orders, margin=None):
         self.settings, self.client, self.db, self.orders = settings, client, db, orders
+        self.margin = margin
+        self.perps = PerpOrders(settings, margin, db) if margin is not None else None
+
+    def _deny(self, name, audit_id, reason):
+        self.db.audit("access_denied", calling_tool=name, request_id=audit_id)
+        return {"status": "rejected", "reason": reason}
 
     async def call(self, name, arguments, scopes):
         audit_id = str(uuid4())
         model = TOOL_MODELS.get(name)
         if not model:
             return {"status": "rejected", "reason": "unknown_tool"}
-        if "read" not in scopes or (name in WRITE_TOOLS and "trade" not in scopes):
-            self.db.audit("access_denied", calling_tool=name, request_id=audit_id)
-            return {"status": "rejected", "reason": "director_permission_required"}
+        if "read" not in scopes:
+            return self._deny(name, audit_id, "director_permission_required")
+        if name in PERP_READ or name in PERP_WRITE:
+            if not self.settings.perps_enabled:
+                return self._deny(name, audit_id, "perps_disabled")
+            if self.perps is None:
+                return self._deny(name, audit_id, "perps_not_configured")
+            if name in PERP_WRITE and ("axe" not in scopes or "trade" in scopes):
+                return self._deny(name, audit_id, "axe_permission_required")
+        if name in WRITE_TOOLS and "trade" not in scopes and "axe" not in scopes:
+            return self._deny(name, audit_id, "director_permission_required")
+        desk = "axe" if "axe" in scopes and "trade" not in scopes else "sports"
         try:
             args = model.model_validate(arguments)
         except ValidationError as exc:
@@ -42,13 +58,27 @@ class Tools:
             elif name == "kalshi_get_orderbook":
                 result = await self.client.orderbook(**params)
             elif name == "kalshi_get_open_orders":
-                result = await self.client.orders(status="resting", **params)
+                result = await self.open_orders(args, desk)
             elif name == "kalshi_get_order":
-                result = await self.orders.get_order(args)
+                result = await self.orders.get_order(args, desk)
             elif name == "kalshi_place_order":
-                result = await self.orders.place(args)
+                result = await self.orders.place(args, desk)
+            elif name == "kalshi_cancel_order":
+                result = await self.orders.cancel(args, desk)
+            elif name == "kalshi_get_margin_markets":
+                result = await self.margin.markets(**params)
+            elif name == "kalshi_get_margin_orderbook":
+                result = await self.margin.orderbook(**params)
+            elif name == "kalshi_get_margin_positions":
+                result = await self.margin.positions()
+            elif name == "kalshi_get_margin_balance":
+                result = await self.margin.balance()
+            elif name == "kalshi_place_perp_order":
+                result = await self.perps.place(args)
+            elif name == "kalshi_cancel_perp_order":
+                result = await self.perps.cancel(args)
             else:
-                result = await self.orders.cancel(args)
+                return {"status": "rejected", "reason": "unknown_tool"}
             self.db.audit("tool_result", calling_tool=name, request_id=audit_id, result=result)
             return result
         except Rejection as exc:
@@ -60,4 +90,14 @@ class Tools:
         except Exception:
             # An unexpected local error must not disclose keys or request headers.
             self.db.audit("tool_error", calling_tool=name, request_id=audit_id, reason="internal_error")
-            return {"status": "unknown", "reason": "internal_error", "reconciliation_required": name in WRITE_TOOLS}
+            return {"status": "unknown", "reason": "internal_error",
+                    "reconciliation_required": name in WRITE_TOOLS or name in PERP_WRITE}
+
+    async def open_orders(self, args, desk):
+        params = args.model_dump(exclude_none=True)
+        if desk != "axe":
+            return await self.client.orders(status="resting", **params)
+        owned = self.db.request_ids_for("axe", "place")
+        rows = [row for row in await self.client.all_pages("orders", status="resting")
+                if row.get("client_order_id") in owned]
+        return {"orders": rows, "cursor": ""}

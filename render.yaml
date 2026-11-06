@@ -37,3 +37,25 @@ services:
         generateValue: true
       - key: MCP_DIRECTOR_TOKEN
         generateValue: true
+      - key: MCP_AXE_TOKEN
+        generateValue: true
+      - key: AXE_MAX_ORDER_COST_CENTS
+        value: "10000"
+      - key: AXE_MAX_DAILY_ORDER_COST_CENTS
+        value: "20000"
+      - key: AXE_INDEX_SERIES
+        value: "KXINX,KXINXU,KXINXPOS,KXNASDAQ100,KXNASDAQ100U,KXDJI"
+      - key: PERPS_ENABLED
+        value: "false"
+      - key: KALSHI_MARGIN_API_KEY_ID
+        sync: false
+      - key: KALSHI_MARGIN_PRIVATE_KEY
+        sync: false
+      - key: AXE_PERP_SYMBOLS
+        value: "TSLA,NVDA,AAPL"
+      - key: AXE_PERP_MAX_ORDER_NOTIONAL_CENTS
+        value: "10000"
+      - key: AXE_PERP_MAX_DAILY_NOTIONAL_CENTS
+        value: "20000"
+      - key: AXE_PERP_MAX_LEVERAGE
+        value: "1"

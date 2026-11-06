@@ -202,6 +202,27 @@ def test_oauth_pkce_flow_and_refresh(web, consent_origin):
         assert new_access not in rows
 
 
+def test_axe_token_does_not_mint_a_reader_session(web):
+    import base64
+    client = web[0]
+    registration = client.post("/register", json={"client_name": "Axe", "redirect_uris": ["https://grok.com/callback"],
+        "token_endpoint_auth_method": "none", "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"], "scope": "read"})
+    client_id = registration.json()["client_id"]
+    verifier = "v" * 64
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    params = {"client_id": client_id, "redirect_uri": "https://grok.com/callback", "response_type": "code",
+              "state": "axe-state", "code_challenge": challenge, "code_challenge_method": "S256",
+              "resource": "http://localhost:8000/mcp"}
+    consent_url = client.get("/authorize?" + urlencode(params), follow_redirects=False).headers["location"]
+    nonce = parse_qs(urlsplit(consent_url).query)["nonce"][0]
+    assert client.get(consent_url).status_code == 200
+    rejected = client.post("/consent", data={"nonce": nonce, "login_token": "x" * 48}, follow_redirects=False)
+    assert rejected.status_code == 403
+    accepted = client.post("/consent", data={"nonce": nonce, "login_token": "r" * 48}, follow_redirects=False)
+    assert accepted.status_code == 200
+
+
 def test_oauth_discovery(web):
     client = web[0]
     protected = client.get("/.well-known/oauth-protected-resource/mcp").json()
@@ -235,7 +256,7 @@ def test_no_secrets_in_audit(web, settings):
     with app.state.db.connection() as c:
         logs = "".join(row[0] for row in c.execute("SELECT record FROM audit"))
     for secret in [settings.kalshi_private_key, settings.admin_token, settings.mcp_read_token,
-                   settings.mcp_director_token, settings.kalshi_api_key_id]:
+                   settings.mcp_director_token, settings.mcp_axe_token, settings.kalshi_api_key_id]:
         assert secret.get_secret_value() not in logs
 
 

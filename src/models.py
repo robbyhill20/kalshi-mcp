@@ -86,6 +86,34 @@ class KillInput(Input):
     halted: bool = Field(strict=True)
 
 
+CountText = Annotated[str, Field(strict=True, pattern=r"^\d+(\.\d{1,2})?$")]
+PriceText = Annotated[str, Field(strict=True, pattern=r"^\d+(\.\d{1,4})?$")]
+
+
+class MarginMarketsInput(Input):
+    status: Literal["inactive", "active", "closed"] | None = None
+
+
+class MarginOrderbookInput(MarketInput):
+    depth: int = Field(default=20, strict=True, ge=0, le=100)
+
+
+class PlacePerpInput(UUIDInput):
+    request_id: UUID
+    ticker: Ticker
+    side: Literal["bid", "ask"]
+    count: CountText
+    price: PriceText
+    time_in_force: Literal["fill_or_kill", "good_till_canceled", "immediate_or_cancel"] = "good_till_canceled"
+    post_only: bool = Field(default=False, strict=True)
+    reduce_only: bool = Field(default=False, strict=True)
+
+
+class CancelPerpInput(UUIDInput):
+    request_id: UUID
+    order_id: UUID
+
+
 TOOL_MODELS = {
     "kalshi_get_balance": Empty,
     "kalshi_get_positions": PositionsInput,
@@ -96,5 +124,14 @@ TOOL_MODELS = {
     "kalshi_get_order": GetOrderInput,
     "kalshi_place_order": PlaceOrderInput,
     "kalshi_cancel_order": CancelOrderInput,
+    "kalshi_get_margin_markets": MarginMarketsInput,
+    "kalshi_get_margin_orderbook": MarginOrderbookInput,
+    "kalshi_get_margin_positions": Empty,
+    "kalshi_get_margin_balance": Empty,
+    "kalshi_place_perp_order": PlacePerpInput,
+    "kalshi_cancel_perp_order": CancelPerpInput,
 }
 WRITE_TOOLS = {"kalshi_place_order", "kalshi_cancel_order"}
+PERP_READ = {"kalshi_get_margin_markets", "kalshi_get_margin_orderbook",
+             "kalshi_get_margin_positions", "kalshi_get_margin_balance"}
+PERP_WRITE = {"kalshi_place_perp_order", "kalshi_cancel_perp_order"}

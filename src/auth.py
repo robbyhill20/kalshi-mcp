@@ -28,6 +28,8 @@ class OwnerOAuth:
     def static_role(self, token):
         if hmac.compare_digest(token.encode(), self.settings.mcp_director_token.get_secret_value().encode()):
             return "trade"
+        if hmac.compare_digest(token.encode(), self.settings.mcp_axe_token.get_secret_value().encode()):
+            return "axe"
         if hmac.compare_digest(token.encode(), self.settings.mcp_read_token.get_secret_value().encode()):
             return "read"
         return None
@@ -69,9 +71,9 @@ class OwnerOAuth:
         return self.db.secret_get("pending", token_hash(nonce))
 
     def consent(self, nonce, login_token):
-        # The owner logs in with the reader/director connector secret. Never the Kalshi PEM.
+        # The Axe token is not an OAuth login. Accepting it here would mint a reader session from it.
         role = self.static_role(login_token)
-        if not role:
+        if role not in {"read", "trade"}:
             return None
         pending = self.db.secret_get("pending", token_hash(nonce), consume=True)
         if not pending:
@@ -141,8 +143,9 @@ class OwnerOAuth:
     async def verify_token(self, token):
         role = self.static_role(token)
         if role:
-            return AccessToken(token=token, client_id="sports-director" if role == "trade" else "reader",
-                               scopes=["read"] + (["trade"] if role == "trade" else []), resource=self.settings.mcp_url,
+            scopes = ["read"] + (["trade"] if role == "trade" else ["axe"] if role == "axe" else [])
+            client_id = {"trade": "sports-director", "axe": "axe"}.get(role, "reader")
+            return AccessToken(token=token, client_id=client_id, scopes=scopes, resource=self.settings.mcp_url,
                                subject="robby")
         value = self.db.secret_get("access", token_hash(token))
         if not value or not self.family_valid(value):

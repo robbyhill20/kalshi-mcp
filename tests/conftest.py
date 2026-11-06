@@ -77,15 +77,17 @@ class Exchange:
                 return httpx.Response(200, content=b"")
         if path == "/portfolio/positions":
             return httpx.Response(200, json={"market_positions": self.positions, "event_positions": [], "cursor": ""})
-        if path == "/markets/TEST-MARKET":
-            self.market_reads += 1
-            market = self.market.copy()
-            if self.close_on_second_read and self.market_reads > 1:
-                market["status"] = "closed"
-            return httpx.Response(200, json={"market": market})
-        if path == "/events/TEST-EVENT":
+        if path.startswith("/markets/") and not path.endswith("/orderbook") and path != "/markets":
+            ticker = path.split("/")[2]
+            if ticker == self.market["ticker"]:
+                self.market_reads += 1
+                market = self.market.copy()
+                if self.close_on_second_read and self.market_reads > 1:
+                    market["status"] = "closed"
+                return httpx.Response(200, json={"market": market})
+        if path.startswith("/events/") and path.split("/")[2] == self.market["event_ticker"]:
             return httpx.Response(200, json={"event": self.event})
-        if path == "/series/TEST":
+        if path.startswith("/series/") and path.split("/")[2] == self.event["series_ticker"]:
             return httpx.Response(200, json={"series": self.series})
         if path == "/markets":
             return httpx.Response(200, json={"markets": [self.market], "cursor": ""})
@@ -131,6 +133,7 @@ def settings(tmp_path):
                             serialization.NoEncryption()).decode()
     return Settings(_env_file=None, kalshi_api_key_id="test-key-id", kalshi_private_key=pem,
                     admin_token="a" * 48, mcp_read_token="r" * 48, mcp_director_token="d" * 48,
+                    mcp_axe_token="x" * 48,
                     database_path=tmp_path / "state.sqlite3")
 
 

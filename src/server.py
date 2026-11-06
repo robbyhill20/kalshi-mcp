@@ -29,9 +29,9 @@ from .auth import OwnerOAuth
 from .config import load_settings
 from .database import Database
 from .errors import APIError
-from .kalshi_client import KalshiClient
+from .kalshi_client import KalshiClient, MarginClient
 from .logging_config import configure_logging
-from .models import ApprovalInput, KillInput, TOOL_MODELS, WRITE_TOOLS
+from .models import ApprovalInput, KillInput, PERP_READ, PERP_WRITE, TOOL_MODELS, WRITE_TOOLS
 from .orders import Orders
 from .tools import Tools
 
@@ -43,12 +43,20 @@ DESCRIPTIONS = {
     "kalshi_get_orderbook": "Read current bid levels on both sides. Never interprets liquidity as trade approval.",
     "kalshi_get_open_orders": "Read a page of resting orders, including partially filled orders. Follow the cursor.",
     "kalshi_get_order": "Read order status or reconcile a local request_id without submitting an order. Unknown is not rejected.",
-    "kalshi_place_order": "Sports Director only. Execute exact supplied terms within owner-configured limits. "
+    "kalshi_place_order": "Sports Director, or Axe on an allowlisted index series. Execute exact supplied terms within that desk's limits. "
                           "Buy price is a maximum; sell price is a minimum. allow_taker=false is maker-only. "
                           "Requires UUID request_id; approval_id is required only when the owner enables per-order approvals. "
                           "Never change terms or replace a rejected/unknown order. Simulation is not a fill.",
-    "kalshi_cancel_order": "Sports Director only. Cancel remaining contracts on one exact order. Partial fills remain executed. "
-                           "Allowed while trading is disabled. In dry run, simulates cancellation. Never assumes final status.",
+    "kalshi_cancel_order": "Sports Director may cancel any order. Axe may cancel only an order Axe placed. "
+                           "Partial fills remain executed. Allowed while trading is disabled. "
+                           "In dry run, simulates cancellation. Never assumes final status.",
+    "kalshi_get_margin_markets": "Read Kalshi margin markets. Hidden until the owner enables perps and sets margin credentials.",
+    "kalshi_get_margin_orderbook": "Read one margin market orderbook. Prices are fixed-point dollars.",
+    "kalshi_get_margin_positions": "Read margin positions for the margin account.",
+    "kalshi_get_margin_balance": "Read margin cash, equity, and available balance. This is not the event-contract balance.",
+    "kalshi_place_perp_order": "Axe only. Place one allowlisted equity perpetual within notional and leverage caps. "
+                               "Off unless perps are enabled. Simulation is not a fill.",
+    "kalshi_cancel_perp_order": "Axe only. Cancel one perpetual order Axe placed. In dry run, simulates cancellation.",
 }
 
 
@@ -105,8 +113,9 @@ def create_app(settings=None, client=None):
         raise RuntimeError("Exactly one server worker may use this database") from None
     db.recover_validating()
     client = client or KalshiClient(settings)
+    margin = MarginClient(settings) if settings.perps_configured() else None
     orders = Orders(settings, client, db)
-    tools = Tools(settings, client, db, orders)
+    tools = Tools(settings, client, db, orders, margin)
     oauth = OwnerOAuth(settings, db)
     mcp = Server("kalshi-grok-mcp", version="1.0.0", instructions=
                  "Execution only. Execute supplied terms under owner policy; never select trades, size stakes, "
@@ -116,11 +125,24 @@ def create_app(settings=None, client=None):
     async def list_tools():
         token = get_access_token()
         scopes = token.scopes if token else []
+
+        def visible(name):
+            if name in PERP_READ or name in PERP_WRITE:
+                if margin is None:
+                    return False
+                if name in PERP_WRITE:
+                    return "axe" in scopes and "trade" not in scopes
+                return "read" in scopes
+            if name in WRITE_TOOLS:
+                return "trade" in scopes or ("axe" in scopes and "trade" not in scopes)
+            return True
+
         return [types.Tool(name=name, description=DESCRIPTIONS[name], inputSchema=model.model_json_schema(),
-                           annotations=types.ToolAnnotations(readOnlyHint=name not in WRITE_TOOLS,
-                                                             destructiveHint=name in WRITE_TOOLS,
-                                                             idempotentHint=True, openWorldHint=True))
-                for name, model in TOOL_MODELS.items() if name not in WRITE_TOOLS or "trade" in scopes]
+                           annotations=types.ToolAnnotations(
+                               readOnlyHint=name not in WRITE_TOOLS and name not in PERP_WRITE,
+                               destructiveHint=name in WRITE_TOOLS or name in PERP_WRITE,
+                               idempotentHint=True, openWorldHint=True))
+                for name, model in TOOL_MODELS.items() if visible(name)]
 
     @mcp.call_tool(validate_input=False)  # Pydantic below is strict; errors never echo raw inputs.
     async def call_tool(name, arguments):
@@ -314,6 +336,8 @@ def create_app(settings=None, client=None):
                 yield
         finally:
             await client.close()
+            if margin is not None:
+                await margin.close()
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
             lock.close()
 
