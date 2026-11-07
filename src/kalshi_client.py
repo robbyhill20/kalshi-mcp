@@ -16,7 +16,7 @@ class KalshiClient:
 
     def __init__(self, settings, transport=None, *, api_key_id=None, private_key=None):
         self.settings = settings
-        self._api_key_id = (api_key_id or settings.kalshi_api_key_id).get_secret_value()
+        self._api_key_id = (api_key_id or settings.kalshi_api_key_id).get_secret_value().strip()
         pem = (private_key or settings.kalshi_private_key).get_secret_value()
         try:
             self._key = serialization.load_pem_private_key(pem.replace("\\n", "\n").encode(), None)
