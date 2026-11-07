@@ -1,6 +1,6 @@
 # Kalshi → Grok MCP
 
-A private execution connector between Grok and the official Kalshi API. The sports reader sees seven read tools. Sports Director sees those plus two execution tools. A separate Axe credential can trade an allowlisted set of index series and, only when margin credentials are configured, equity perpetuals. It contains no betting strategy, market selection, probability estimates, sizing strategy or generic API tool.
+A private execution connector between Grok and the official Kalshi API. The sports reader sees seven read tools. Sports Director sees those plus two execution tools. A separate Axe credential can trade an allowlisted set of index series and, only when PERPS_ENABLED is true, equity perpetuals. It contains no betting strategy, market selection, probability estimates, sizing strategy or generic API tool.
 
 **Initial settings: `DRY_RUN=true` and `TRADING_ENABLED=false`. No live trading is enabled by this repository.**
 
@@ -258,6 +258,9 @@ Do not restore an old disk snapshot or delete/reset SQLite to fix a duplicate er
 |---|---|
 | `KALSHI_API_KEY_ID` | Required secret: official Kalshi Key ID |
 | `KALSHI_PRIVATE_KEY` | Required secret: Ed25519/RSA PEM; real newlines or escaped `\n` |
+| `PERPS_ENABLED` | `false`. While false, perp tools stay hidden and calls return `perps_disabled`. |
+| `KALSHI_MARGIN_API_KEY_ID` | Optional. The margin pair signs only when this and `KALSHI_MARGIN_PRIVATE_KEY` are both non-empty. |
+| `KALSHI_MARGIN_PRIVATE_KEY` | Optional. When both margin values are empty or unset, margin requests sign with the event pair. When exactly one is non-empty, the process still starts, perp calls return `perps_not_configured`, and no request is signed. |
 | `KALSHI_ENV` | `production`; only `production` or `demo` |
 | `DRY_RUN` | `true` |
 | `TRADING_ENABLED` | `false` |

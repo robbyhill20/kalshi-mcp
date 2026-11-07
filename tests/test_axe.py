@@ -377,3 +377,101 @@ def test_default_perp_symbols_match_demo_tickers(settings, symbol):
     assert perp_ticker_allowed(f"KX{symbol}PERP1", settings.axe_perp_symbol_set)
     assert not perp_ticker_allowed("KXBTCPERP1", settings.axe_perp_symbol_set)
     assert settings.axe_index_series_set == {"KXINX", "KXINXU", "KXINXPOS", "KXNASDAQ100", "KXNASDAQ100U", "KXDJI"}
+
+
+def _margin_transport(seen):
+    async def handle(request):
+        seen.append((request.headers["KALSHI-ACCESS-KEY"], request.url.path))
+        return httpx.Response(200, json={"markets": []})
+
+    return handle
+
+
+async def _read_margin_markets(settings, seen):
+    client = MarginClient(settings, httpx.MockTransport(_margin_transport(seen)))
+    try:
+        await client.markets()
+    finally:
+        await client.close()
+
+
+async def test_margin_markets_use_event_key_when_margin_secrets_are_absent(settings):
+    seen = []
+    settings.perps_enabled = True
+    for margin_key, margin_pem in ((None, None), (SecretStr(""), SecretStr(""))):
+        settings.kalshi_margin_api_key_id = margin_key
+        settings.kalshi_margin_private_key = margin_pem
+        await _read_margin_markets(settings, seen)
+    assert len(seen) == 2
+    for access_key, path in seen:
+        assert access_key == "test-key-id"
+        assert path.startswith("/trade-api/v2/margin/")
+
+
+async def test_explicit_margin_key_signs_margin_markets(settings):
+    seen = []
+    settings.kalshi_margin_api_key_id = SecretStr("margin-key")
+    settings.kalshi_margin_private_key = settings.kalshi_private_key
+    await _read_margin_markets(settings, seen)
+    access_key, path = seen[0]
+    assert access_key == "margin-key"
+    assert path.startswith("/trade-api/v2/margin/")
+
+
+def test_perps_default_off(settings):
+    assert settings.perps_enabled is False
+    assert settings.perps_configured() is False
+
+
+def test_discovery_lists_margin_balance_for_reader_without_margin_secrets(settings):
+    remote = Exchange()
+    settings.perps_enabled = True
+    app = create_app(settings, KalshiClient(settings, httpx.MockTransport(remote.handle)))
+    with TestClient(app, base_url="http://localhost:8000") as client:
+        axe = listed(client, "x" * 48)
+        director = listed(client, "d" * 48)
+        reader = listed(client, "r" * 48)
+        assert {"kalshi_place_perp_order", "kalshi_cancel_perp_order"} <= axe
+        assert "kalshi_place_perp_order" not in director
+        assert "kalshi_get_margin_balance" in reader
+        assert "kalshi_place_perp_order" not in reader
+
+
+@pytest.mark.parametrize("which", ["key_only", "key_and_blank_pem", "pem_only", "pem_and_blank_key"])
+async def test_partial_margin_pair_signs_nothing(settings, which):
+    settings.perps_enabled = True
+    event_pem = settings.kalshi_private_key
+    if which == "key_only":
+        settings.kalshi_margin_api_key_id = SecretStr("margin-key")
+        settings.kalshi_margin_private_key = None
+    elif which == "key_and_blank_pem":
+        settings.kalshi_margin_api_key_id = SecretStr("margin-key")
+        settings.kalshi_margin_private_key = SecretStr("")
+    elif which == "pem_only":
+        settings.kalshi_margin_api_key_id = None
+        settings.kalshi_margin_private_key = event_pem
+    else:
+        settings.kalshi_margin_api_key_id = SecretStr("")
+        settings.kalshi_margin_private_key = event_pem
+    remote = Exchange()
+    app = create_app(settings, KalshiClient(settings, httpx.MockTransport(remote.handle)))
+    with TestClient(app, base_url="http://localhost:8000") as client:
+        assert "kalshi_get_margin_balance" not in listed(client, "r" * 48)
+        response = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                             "params": {"name": "kalshi_get_margin_balance", "arguments": {}}},
+                               headers={"Authorization": "Bearer " + "r" * 48,
+                                        "Accept": "application/json, text/event-stream",
+                                        "MCP-Protocol-Version": "2025-11-25"})
+        assert response.status_code == 200
+        assert response.json()["result"]["structuredContent"]["reason"] == "perps_not_configured"
+    assert remote.calls == []
+    built = None
+    try:
+        built = MarginClient(settings)
+    except ValueError as exc:
+        assert str(exc) == "Set both KALSHI_MARGIN_API_KEY_ID and KALSHI_MARGIN_PRIVATE_KEY, or leave both empty"
+    else:
+        raise AssertionError("partial margin pair must be refused")
+    finally:
+        if built is not None:
+            await built.close()

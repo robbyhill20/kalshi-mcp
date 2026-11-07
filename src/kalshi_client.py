@@ -142,8 +142,10 @@ class KalshiClient:
 
 class MarginClient(KalshiClient):
     def __init__(self, settings, transport=None):
-        super().__init__(settings, transport, api_key_id=settings.kalshi_margin_api_key_id,
-                         private_key=settings.kalshi_margin_private_key)
+        pair = settings.margin_signing_pair()
+        if pair is None:
+            raise ValueError("Set both KALSHI_MARGIN_API_KEY_ID and KALSHI_MARGIN_PRIVATE_KEY, or leave both empty")
+        super().__init__(settings, transport, api_key_id=pair.api_key_id, private_key=pair.private_key)
 
     async def markets(self, status=None):
         params = {"status": status} if status else None

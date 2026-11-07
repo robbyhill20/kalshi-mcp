@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -5,6 +6,12 @@ from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+@dataclass(frozen=True, kw_only=True)
+class SigningPair:
+    api_key_id: SecretStr
+    private_key: SecretStr
 
 
 class Settings(BaseSettings):
@@ -74,9 +81,19 @@ class Settings(BaseSettings):
     def axe_perp_symbol_set(self):
         return frozenset(part.strip().upper() for part in self.axe_perp_symbols.split(",") if part.strip())
 
+    def margin_signing_pair(self) -> SigningPair | None:
+        key = self.kalshi_margin_api_key_id
+        pem = self.kalshi_margin_private_key
+        if key is not None and key.get_secret_value() != "":
+            if pem is not None and pem.get_secret_value() != "":
+                return SigningPair(api_key_id=key, private_key=pem)
+            return None
+        if pem is None or pem.get_secret_value() == "":
+            return SigningPair(api_key_id=self.kalshi_api_key_id, private_key=self.kalshi_private_key)
+        return None
+
     def perps_configured(self):
-        key, pem = self.kalshi_margin_api_key_id, self.kalshi_margin_private_key
-        return bool(self.perps_enabled and key and pem and key.get_secret_value() and pem.get_secret_value())
+        return bool(self.perps_enabled and self.margin_signing_pair() is not None)
 
 
 def load_settings():

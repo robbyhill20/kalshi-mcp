@@ -51,7 +51,7 @@ DESCRIPTIONS = {
     "kalshi_cancel_order": "Sports Director may cancel any order. Axe may cancel only an order Axe placed. "
                            "Partial fills remain executed. Allowed while trading is disabled. "
                            "In dry run, simulates cancellation. Never assumes final status.",
-    "kalshi_get_margin_markets": "Read Kalshi margin markets. Hidden until the owner enables perps and sets margin credentials.",
+    "kalshi_get_margin_markets": "Read Kalshi margin markets. Hidden while PERPS_ENABLED is false.",
     "kalshi_get_margin_orderbook": "Read one margin market orderbook. Prices are fixed-point dollars.",
     "kalshi_get_margin_positions": "Read margin positions for the margin account.",
     "kalshi_get_margin_balance": "Read margin cash, equity, and available balance. This is not the event-contract balance.",
