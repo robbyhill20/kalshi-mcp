@@ -258,6 +258,20 @@ def test_owner_page_offers_the_transfer_form(web):
     assert "exchange-balances" in script and 'call("transfer"' in script
 
 
+def test_owner_script_reports_clicks_and_binds_before_uuid(web):
+    script = web[0].get("/assets/owner.js").text
+    assert "Working…" in script
+    assert "Wrong or missing ADMIN_TOKEN" in script
+    assert "window.onerror" in script and "window.onunhandledrejection" in script
+    uuid_fn = script.split("async function call", 1)[0]
+    assert "randomUUID" in uuid_fn and "getRandomValues" in uuid_fn
+    assert "randomUUID" not in script.split("async function call", 1)[1]
+    # The initial id is minted last, so a missing randomUUID cannot skip the handlers.
+    assert script.count("newTransferId(true)") == 1
+    assert script.count("newTransferId(false)") == 1
+    assert script.rstrip().endswith("newTransferId(false);")
+
+
 def test_audit_record_is_json_without_request_body_secrets(web, settings):
     client, app, _ = web
     move(client, sample())
