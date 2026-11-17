@@ -1,6 +1,6 @@
 # Kalshi → Grok MCP
 
-A private execution connector between Grok and the official Kalshi API. The sports reader sees seven read tools. Sports Director sees those plus two execution tools. A separate Axe credential can trade an allowlisted set of index series and, only when margin credentials are configured, equity perpetuals. It contains no betting strategy, market selection, probability estimates, sizing strategy or generic API tool.
+A private execution connector between Grok and the official Kalshi API. The sports reader sees eight read tools. Sports Director sees those plus two execution tools. A separate Axe credential can trade an allowlisted set of index series and, only when margin credentials are configured, equity perpetuals. It contains no betting strategy, market selection, probability estimates, sizing strategy or generic API tool.
 
 **Initial settings: `DRY_RUN=true` and `TRADING_ENABLED=false`. No live trading is enabled by this repository.**
 
@@ -21,6 +21,7 @@ Grok bots ──HTTPS + OAuth/Bearer──► Your managed MCP service ──sig
 | Tool | Purpose |
 |---|---|
 | `kalshi_get_balance` | Primary-account available cash and portfolio value |
+| `kalshi_get_exchange_balances` | Primary-account cash on each exchange index. Read-only |
 | `kalshi_get_positions` | A page of unsettled positions |
 | `kalshi_get_market` | An exact market ticker |
 | `kalshi_get_markets` | Filtered market discovery, without recommendations |
@@ -30,7 +31,7 @@ Grok bots ──HTTPS + OAuth/Bearer──► Your managed MCP service ──sig
 | `kalshi_place_order` | Exact limit order under owner policy, or validated dry run |
 | `kalshi_cancel_order` | Cancel remaining contracts on one order, or simulate in dry run |
 
-The reader credential discovers only the seven read tools. The director credential discovers all nine event-contract tools. Axe discovers the same nine, and the margin tools only after perps are enabled. Write authorization is checked again when a tool is called, even if someone bypasses discovery. A bot claiming to be Sports Director does not grant it permissions. Axe cannot cancel the director's orders, and the director token is not granted Axe's perpetual orders.
+The reader credential discovers only the eight read tools. The director credential discovers all ten event-contract tools. Axe discovers the same nine, and the margin tools only after perps are enabled. Write authorization is checked again when a tool is called, even if someone bypasses discovery. A bot claiming to be Sports Director does not grant it permissions. Axe cannot cancel the director's orders, and the director token is not granted Axe's perpetual orders.
 
 Index series such as `KXINX` trade on Kalshi exchange shard 0. That shard also holds 40% of the sports balance allocation. Axe and sports share that cash. Each desk has its own daily ledger, and an Axe order reserves its cost on shard 0 so a later sports order on that shard sees less available cash. Axe cannot spend past its own caps, and its spend does not reduce the sports daily budget. Sports orders on other shards do not see Axe's shard 0 reserve.
 
@@ -53,7 +54,7 @@ You can also use GitHub's **Add file → Upload files** interface, but confirm t
 1. Sign in to [Kalshi profile settings](https://kalshi.com/account/profile).
 2. Find **API Keys → Create New API Key**. Choose **Ed25519** if offered; RSA is also supported.
 3. Save the **Key ID** and the **entire private key**, including `BEGIN`/`END` lines, in your password manager. Kalshi only shows the private key once.
-4. Use the least permissions available: read access, trade execution/cancellation, and the owner-only target balance allocation setting if Kalshi separates that permission. This app does not call direct transfer, withdrawal, or key-management endpoints. The target allocation instructs Kalshi to rebalance cash between exchange indexes.
+4. Use the least permissions available: read access, trade execution/cancellation, and the owner-only balance move if Kalshi separates that permission. This app does not call withdrawal or key-management endpoints. Moving cash between exchange indexes is owner-only, on `/owner`. No bot token can do it. The target allocation separately instructs Kalshi to rebalance cash between exchange indexes.
 5. Production keys work only with `KALSHI_ENV=production`. For the demo environment, generate a separate demo key, use `KALSHI_ENV=demo`, and deploy a separate service/disk. Never switch an existing database between environments or accounts.
 
 The current [official key documentation](https://docs.kalshi.com/getting_started/api_keys) describes Ed25519 and RSA-PSS signatures. This server implements both. The private key stays in Render's secret environment storage and is never provided to Grok.
@@ -174,6 +175,16 @@ Kalshi divides predictions cash among exchange indexes. The server checks the ba
 
 Kalshi performs subsequent rebalancing itself, about every ten seconds; it does not depend on this server staying online. Its target applies to balances after accounting for resting orders, so the displayed balances are not guaranteed to be exactly equal at every instant or to stay above a fixed dollar minimum. The owner button submits once, then reads Kalshi's setting to confirm it. If the result says `allocation_update_unconfirmed`, check the current allocation before trying again; a timed-out write may already have taken effect. To disable or choose a different target, use Kalshi's official target-allocation API or clearing portal with owner authorization. See [Kalshi's exchange sharding guide](https://docs.kalshi.com/getting_started/exchange_sharding) and [target allocation API](https://docs.kalshi.com/api-reference/portfolio/set-target-balance-allocation).
 
+### Move cash between exchange indexes
+
+The allocation above is Kalshi's ongoing target. It does not move a chosen amount tonight. On `/owner`, **Check pool balances** reads primary-account cash per exchange index. **Move cash** sends one amount, in cents, from one index (0–3) to another.
+
+Paste **ADMIN_TOKEN**, check the pools, leave the request id as shown, choose the indexes and amount, and click **Move cash**. With `DRY_RUN=true` the page shows the request and sends nothing to Kalshi. With `DRY_RUN=false` the server calls Kalshi once. Kalshi's amount is centicents, and this server converts cents for you. The default cap is $10,000 per move (`MAX_TRANSFER_CENTS`). The emergency stop does not block this; it only blocks new orders.
+
+If the result is unconfirmed, click **Move cash** again without changing the request id. That retries the same Kalshi request id and cannot create a second move. Click **New request id** only for a different move. Reader, Sports Director, and Axe tokens are rejected. They can read pools with `kalshi_get_exchange_balances` and cannot move cash.
+
+This calls [Intra Account Transfer](https://docs.kalshi.com/api-reference/portfolio/intra-account-transfer) (`POST /portfolio/intra_exchange_instance_transfer`) on the primary account, event-contract to event-contract. [Transfer Between Subaccounts](https://docs.kalshi.com/api-reference/portfolio/transfer-between-subaccounts) stays on one exchange index, so it is not used here. Pool reads use [Get All Subaccount Balances](https://docs.kalshi.com/api-reference/portfolio/get-all-subaccount-balances).
+
 ### Daily submission ceiling
 
 `MAX_DAILY_ORDER_COST_CENTS=20000` initially limits new submissions to $200 per UTC day,
@@ -263,6 +274,7 @@ Do not restore an old disk snapshot or delete/reset SQLite to fix a duplicate er
 | `TRADING_ENABLED` | `false` |
 | `REQUIRE_TRADE_APPROVAL` | Included deployment: `false`; Python fallback: `true`. Only owner configuration can change it |
 | `MAX_DAILY_ORDER_COST_CENTS` | `20000`; daily submission ceiling including conservative fee reserves, resets at midnight UTC |
+| `MAX_TRANSFER_CENTS` | Optional. Default `1000000` ($10,000) per owner move between exchange indexes. Hard ceiling `10000000`. Not set by the Blueprint |
 | `ADMIN_TOKEN` | Required different random secret, at least 32 characters; owner only |
 | `MCP_READ_TOKEN` | Required different random secret, at least 32 characters |
 | `MCP_DIRECTOR_TOKEN` | Required different random secret, at least 32 characters; Sports Director only |
@@ -303,7 +315,7 @@ The current official [Grok connector guide](https://docs.x.ai/grok/connectors) s
 2. Choose **New Connector → Custom**. Enter your full `https://…onrender.com/mcp` URL.
 3. Follow the authentication redirect to **your own Render hostname**. The consent page shows the callback URL. Only continue if you initiated this connection.
 4. Enter **MCP_READ_TOKEN**, not the Kalshi key or ADMIN_TOKEN, on that consent page. This issues a read-only OAuth connection. If asked for client ID/secret, use automatic registration when offered; this app supplies `/register` and discovery metadata.
-5. After returning to Grok, check that only the seven read tools are visible. Test balance and one exact market lookup.
+5. After returning to Grok, check that only the eight read tools are visible. Test balance and one exact market lookup.
 
 ### Connect Sports Director separately
 
@@ -313,7 +325,7 @@ Do not attach a director-authorized connector to all bots. If your Grok UI share
 
 If Grok reports `invalid_redirect_uri`, inspect the actual callback URL in its error/connection flow. The default callback hosts are a restricted starting allowlist, **not a claim about every Grok UI variant**. Add only the observed, official HTTPS callback hostname to `OAUTH_REDIRECT_HOSTS` in Render and redeploy. Never use a wildcard or an arbitrary third-party hostname. If your account requires admin provisioning, follow [Grok's connector-management guide](https://docs.x.ai/grok/connector-management). Authentication failures must be fixed without making the MCP endpoint public.
 
-For xAI API clients that accept an authorization value, an alternative is `Authorization: Bearer <MCP_READ_TOKEN>` or the director token, with `server_url` set to your public `/mcp` URL. Configure the complete `Bearer …` value as the API's authorization setting where required by its SDK. Other agents should receive only the seven read tools in their `allowed_tools`/`allowed_tool_names` list. These static secrets are intended for connector configuration, not model messages. The OAuth flow above avoids relying on a custom-header field in Grok's consumer interface.
+For xAI API clients that accept an authorization value, an alternative is `Authorization: Bearer <MCP_READ_TOKEN>` or the director token, with `server_url` set to your public `/mcp` URL. Configure the complete `Bearer …` value as the API's authorization setting where required by its SDK. Other agents should receive only the eight read tools in their `allowed_tools`/`allowed_tool_names` list. These static secrets are intended for connector configuration, not model messages. The OAuth flow above avoids relying on a custom-header field in Grok's consumer interface.
 
 ### Recommended instructions for all Grok agents
 

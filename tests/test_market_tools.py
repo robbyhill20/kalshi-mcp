@@ -4,6 +4,7 @@ import pytest
 @pytest.mark.parametrize("name,args,field", [
     ("kalshi_get_market", {"ticker": "TEST-MARKET"}, "market"),
     ("kalshi_get_balance", {}, "balance"),
+    ("kalshi_get_exchange_balances", {}, "balances"),
     ("kalshi_get_positions", {}, "market_positions"),
     ("kalshi_get_markets", {}, "markets"),
     ("kalshi_get_orderbook", {"ticker": "TEST-MARKET"}, "orderbook_fp"),

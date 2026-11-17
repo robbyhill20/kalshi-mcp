@@ -53,8 +53,8 @@ def test_tool_discovery_role_separation(web):
     client = web[0]
     readonly = rpc(client, "tools/list").json()["result"]["tools"]
     director = rpc(client, "tools/list", token="d" * 48).json()["result"]["tools"]
-    assert len(readonly) == 7
-    assert len(director) == 9
+    assert len(readonly) == 8
+    assert len(director) == 10
     assert all(t["inputSchema"]["additionalProperties"] is False for t in director)
     response = rpc(client, "tools/call", {"name": "kalshi_place_order", "arguments": {}})
     assert response.json()["result"]["structuredContent"]["reason"] == "director_permission_required"
@@ -185,7 +185,7 @@ def test_oauth_pkce_flow_and_refresh(web, consent_origin):
     assert response.status_code == 200, response.text
     tokens = response.json()
     assert rpc(client, "tools/list", token=tokens["access_token"]).status_code == 200
-    assert len(rpc(client, "tools/list", token=tokens["access_token"]).json()["result"]["tools"]) == 7
+    assert len(rpc(client, "tools/list", token=tokens["access_token"]).json()["result"]["tools"]) == 8
     assert client.post("/token", data=token_params).status_code == 400
     refresh_params = {"grant_type": "refresh_token", "client_id": client_id, "refresh_token": tokens["refresh_token"]}
     refreshed = client.post("/token", data=refresh_params)
@@ -296,6 +296,6 @@ async def test_official_mcp_client_round_trip(settings):
                 async with ClientSession(read, write) as session:
                     initialized = await session.initialize()
                     assert initialized.serverInfo.name == "kalshi-grok-mcp"
-                    assert len((await session.list_tools()).tools) == 7
+                    assert len((await session.list_tools()).tools) == 8
                     result = await session.call_tool("kalshi_get_balance", {})
                     assert result.structuredContent["balance"] == 100000

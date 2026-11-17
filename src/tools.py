@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from .errors import APIError, Rejection
 from .models import PERP_READ, PERP_WRITE, TOOL_MODELS, WRITE_TOOLS
+from .transfers import primary_exchange_balances
 from .perps import PerpOrders
 
 
@@ -49,6 +50,8 @@ class Tools:
             params = args.model_dump(exclude_none=True)
             if name == "kalshi_get_balance":
                 result = await self.client.balance()
+            elif name == "kalshi_get_exchange_balances":
+                result = primary_exchange_balances(await self.client.subaccount_balances())
             elif name == "kalshi_get_positions":
                 result = await self.client.positions(**params)
             elif name == "kalshi_get_market":

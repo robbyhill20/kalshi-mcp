@@ -24,6 +24,11 @@ class Exchange:
         self.orders = {}
         self.target_allocation = {"allocations": [], "resting_margin_reservation": "sum"}
         self.allocation_posts = []
+        self.transfer_posts = []
+        self.pool_balances = [
+            {"subaccount_number": 0, "exchange_index": 0, "balance": "1000.0000", "updated_ts": 1},
+            {"subaccount_number": 0, "exchange_index": 3, "balance": "0.0000", "updated_ts": 1},
+        ]
         self.balance = 100000
         self.shard3_active = False
         self.event = {"event_ticker": "TEST-EVENT", "series_ticker": "TEST"}
@@ -51,6 +56,8 @@ class Exchange:
         path = request.url.path.removeprefix("/trade-api/v2")
         key = (request.method, path)
         self.calls.append((key, dict(request.url.params)))
+        if request.method == "POST" and path == "/portfolio/intra_exchange_instance_transfer":
+            self.transfer_posts.append(json.loads(request.content))
         assert request.headers["KALSHI-ACCESS-KEY"] == "test-key-id"
         assert "KALSHI-ACCESS-SIGNATURE" in request.headers
         if key in self.fail:
@@ -64,6 +71,10 @@ class Exchange:
                                                  {"exchange_index": 0, "exchange_active": True, "trading_active": True},
                                                  {"exchange_index": 3, "exchange_active": self.shard3_active,
                                                   "trading_active": self.shard3_active}]})
+        if path == "/portfolio/subaccounts/balances" and request.method == "GET":
+            return httpx.Response(200, json={"subaccount_balances": self.pool_balances})
+        if path == "/portfolio/intra_exchange_instance_transfer" and request.method == "POST":
+            return httpx.Response(200, json={"transfer_id": "mock-transfer"})
         if path == "/portfolio/balance":
             return httpx.Response(200, json={"balance": self.balance, "balance_dollars": f"{self.balance / 100:.4f}",
                                             "portfolio_value": 0, "updated_ts": 0})

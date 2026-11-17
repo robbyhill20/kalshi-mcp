@@ -71,6 +71,13 @@ class KalshiClient:
     async def close(self):
         await self.http.aclose()
 
+    async def subaccount_balances(self):
+        return await self._request("GET", "/portfolio/subaccounts/balances")
+
+    async def transfer_between_exchange_indexes(self, body):
+        # Owner-only. Kalshi's intra-exchange transfer, not a subaccount-to-subaccount move.
+        return await self._request("POST", "/portfolio/intra_exchange_instance_transfer", body=body)
+
     async def balance(self, exchange_index=None):
         params = {"subaccount": 0}
         if exchange_index is not None:
