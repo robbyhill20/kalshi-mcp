@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     # Only the owner can configure these; no tool can modify them.
     max_order_cost_cents: int = Field(default=10000, ge=1, le=1000000)
     max_daily_order_cost_cents: int = Field(default=20000, ge=1, le=100000000)
+    # One owner move between exchange indexes. Cash stays in the Kalshi account.
+    max_transfer_cents: int = Field(default=1_000_000, ge=1, le=10_000_000)
     # Axe's event-contract caps are a separate ledger from the sports caps above.
     axe_max_order_cost_cents: int = Field(default=10000, ge=1, le=1000000)
     axe_max_daily_order_cost_cents: int = Field(default=20000, ge=1, le=100000000)

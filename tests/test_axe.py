@@ -151,7 +151,7 @@ def test_discovery_hides_perp_tools_until_configured(settings):
     remote = Exchange()
     app = create_app(settings, KalshiClient(settings, httpx.MockTransport(remote.handle)))
     with TestClient(app, base_url="http://localhost:8000") as client:
-        assert len(listed(client, "r" * 48)) == 7
+        assert len(listed(client, "r" * 48)) == 8
         assert listed(client, "d" * 48) == listed(client, "r" * 48) | {"kalshi_place_order", "kalshi_cancel_order"}
         assert listed(client, "x" * 48) == listed(client, "d" * 48)
         assert not any(name.startswith("kalshi_") and "margin" in name or name.endswith("perp_order")

@@ -125,7 +125,10 @@ class Database:
                     raise Rejection("missing_expired_or_mismatched_owner_approval")
                 if c.execute("SELECT 1 FROM requests WHERE approval_id=?", (approval_id,)).fetchone():
                     raise Rejection("approval_already_used")
-            if desk not in {"sports", "axe"}:
+            if kind == "transfer":
+                if desk != "owner":
+                    raise Rejection("invalid_desk")
+            elif desk not in {"sports", "axe"}:
                 raise Rejection("invalid_desk")
             c.execute("INSERT INTO requests(request_id, approval_id, kind, payload, hash, status, created, desk) "
                       "VALUES (?, ?, ?, ?, ?, 'validating', ?, ?)",
@@ -201,6 +204,16 @@ class Database:
     def clear_reserve(self, request_id):
         with self.connection() as c:
             c.execute("UPDATE requests SET reserve_cents=0 WHERE request_id=?", (request_id,))
+
+    def note_transfer_submitting(self, request_id):
+        """Mark an owner transfer as in flight. Does not touch order budgets or the placement gate."""
+        with self.connection() as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute("SELECT status, kind FROM requests WHERE request_id=?", (str(request_id),)).fetchone()
+            if not row or row["kind"] != "transfer" or row["status"] not in {"validating", "submitting", "unknown"}:
+                raise Rejection("transfer_not_pending")
+            c.execute("UPDATE requests SET status='submitting', submitted_at=COALESCE(submitted_at, ?) WHERE request_id=?",
+                      (time.time(), str(request_id)))
 
     def set_exchange_index(self, request_id, exchange_index):
         with self.connection() as c:

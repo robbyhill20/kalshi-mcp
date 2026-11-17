@@ -18,6 +18,23 @@ for resting orders. Displayed balances can differ from the target while orders a
 <button id="allocation-set">Set ongoing 40/20/40 target</button></div>
 <p>This is an owner-only account setting. Grok cannot change it. The setting remains active until you change
 or disable it through Kalshi.</p></section>
+<section><h2>Move cash between exchange indexes</h2>
+<p>Moves cash once from one exchange index to another on the primary account. 0 is Default, 1 is Combos,
+2 is Crypto and Commodities, and 3 is Tennis, Baseball, and Basketball. Amount is cents.
+The same request id will not create a second move. With DRY_RUN on, this only shows what would be sent.
+A bot token cannot do this.</p>
+<div class="buttons"><button id="pools" type="button">Check pool balances</button></div>
+<form id="transfer">
+<label>From index <select id="from-index"><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
+<label>To index <select id="to-index"><option>0</option><option>1</option><option>2</option><option selected>3</option></select></label>
+<label>Amount, cents <input id="transfer-amount" type="number" min="1" step="1" required></label>
+<label>Request ID <input id="transfer-request-id" required></label>
+<div class="buttons"><button type="submit">Move cash</button>
+<button id="transfer-new-id" type="button">New request id</button></div>
+</form>
+<p>Retry an unconfirmed move with the same request id. A new request id can move the money again.
+One move is capped at $10,000 unless MAX_TRANSFER_CENTS is set lower or higher.
+In a dry run, <code>would_submit.amount</code> is centicents: cents times 100. $1.50 is 150 cents and 15000 centicents.</p></section>
 <section id="approval-controls"><h2>Optional: approve one exact order</h2><p>This section is only needed when REQUIRE_TRADE_APPROVAL=true.
 Each approval expires after 15 minutes and is usable once.
 Buy price is your maximum cost per contract; sell price is your minimum proceeds per contract.</p>

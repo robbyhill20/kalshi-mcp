@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Ticker = Annotated[str, Field(strict=True, min_length=1, max_length=200, pattern=r"^[A-Z0-9][A-Z0-9_.-]*$")]
 Cursor = Annotated[str, Field(strict=True, max_length=2048, pattern=r"^[A-Za-z0-9_+=/.-]*$")]
@@ -86,6 +86,19 @@ class KillInput(Input):
     halted: bool = Field(strict=True)
 
 
+class TransferInput(UUIDInput):
+    request_id: UUID
+    from_index: int = Field(strict=True, ge=0, le=3)
+    to_index: int = Field(strict=True, ge=0, le=3)
+    amount_cents: int = Field(strict=True, ge=1, le=10_000_000)
+
+    @model_validator(mode="after")
+    def indexes_differ(self):
+        if self.from_index == self.to_index:
+            raise ValueError("indexes must differ")
+        return self
+
+
 CountText = Annotated[str, Field(strict=True, pattern=r"^\d+(\.\d{1,2})?$")]
 PriceText = Annotated[str, Field(strict=True, pattern=r"^\d+(\.\d{1,4})?$")]
 
@@ -117,6 +130,7 @@ class CancelPerpInput(UUIDInput):
 
 TOOL_MODELS = {
     "kalshi_get_balance": Empty,
+    "kalshi_get_exchange_balances": Empty,
     "kalshi_get_positions": PositionsInput,
     "kalshi_get_market": MarketInput,
     "kalshi_get_markets": MarketsInput,

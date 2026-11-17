@@ -22,6 +22,16 @@ el("resume").onclick = () => call("halt", {halted: false});
 el("revoke").onclick = () => call("revoke-sessions", {});
 el("allocation-status").onclick = () => call("allocation");
 el("allocation-set").onclick = () => call("allocation", {target: "default_40_combos_20_sports_40"});
+el("pools").onclick = () => call("exchange-balances");
+const newTransferId = () => { el("transfer-request-id").value = crypto.randomUUID(); };
+newTransferId();
+el("transfer-new-id").onclick = newTransferId;
+el("transfer").onsubmit = (event) => {
+  event.preventDefault();
+  call("transfer", {request_id: el("transfer-request-id").value,
+    from_index: Number(el("from-index").value), to_index: Number(el("to-index").value),
+    amount_cents: Number(el("transfer-amount").value)});
+};
 el("approval").onsubmit = (event) => {
   event.preventDefault();
   call("approvals", {request_id: el("request_id").value, ticker: el("ticker").value,
